@@ -1,0 +1,11 @@
+numpy
+scipy
+scikit-image
+networkx
+pandas
+matplotlib
+pygame
+pillow
+pyyaml
+pytest
+ruff

@@ -11,7 +11,19 @@ from hierpath.grid import Cell, Grid, SearchResult
 
 
 def place_doorways(gap: Gap, max_gap: int = 6) -> list[tuple[Cell, Cell]]:
-    raise NotImplementedError
+    if max_gap < 1:
+        raise ValueError("max_gap must be at least 1")
+
+    pairs = sorted(gap.pairs, key=lambda pair: pair[0])
+    width = len(pairs)
+
+    if width == 0:
+        return []
+
+    if width < max_gap:
+        return [pairs[width // 2]]
+
+    return [pairs[0], pairs[-1]]
 
 
 class DoorwayGraph:

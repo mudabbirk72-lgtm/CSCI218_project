@@ -1,9 +1,7 @@
-
-
 from __future__ import annotations
-
 from collections.abc import Callable
-
+from scipy.ndimage import find_objects, generate_binary_structure
+from scipy.ndimage import label as nd_label
 import numpy as np
 
 
@@ -48,7 +46,7 @@ def validate(blocked: np.ndarray, labels: np.ndarray) -> np.ndarray:
 
 
 def fixed_blocks(blocked: np.ndarray, block_size: int = 16) -> np.ndarray:
-        if block_size < 2:
+    if block_size < 2:
         raise ValueError(f"block_size must be >= 2, got {block_size}")
 
     h, w = blocked.shape

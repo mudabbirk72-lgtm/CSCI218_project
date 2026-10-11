@@ -197,17 +197,54 @@ def reconstruct_path(parent:dict[Hashable,Hashable|None],
 class FlatPlanner:
 
     def __init__(self,algorithm:str="astar",heuristic:str="octile")->None:
-        raise NotImplementedError
+
+        # check the selected algorithm and heuristic
+        if algorithm not in ("astar","dijkstra"):
+            raise ValueError("Unknown algorithm")
+
+        if heuristic not in ("octile","manhattan"):
+            raise ValueError("Unknown heuristic")
+
+        self.algorithm=algorithm
+        self.heuristic=heuristic
+        self.name="A*" if algorithm=="astar" else "Dijkstra"
+        self.grid:Grid|None=None
 
     def preprocess(self,grid:Grid)->float:
-        raise NotImplementedError
+
+        # store the grid
+        self.grid=grid
+        return 0.0
 
     def query(self,start:Cell,goal:Cell,
               on_expand:Callable[[Cell],None]|None=None)->SearchResult:
-        raise NotImplementedError
+
+        # check if preprocessing has been done
+        if self.grid is None:
+            raise RuntimeError("Call preprocess() before query()")
+
+        # check if start and goal are valid
+        if not self.grid.is_free(start):
+            raise ValueError("Invalid start cell")
+
+        if not self.grid.is_free(goal):
+            raise ValueError("Invalid goal cell")
+
+        # run the selected algorithm
+        if self.algorithm=="dijkstra":
+            return dijkstra(start,{goal},self.grid.neighbours,on_expand)
+
+        if self.heuristic=="manhattan":
+            heuristic_function=lambda cell: manhattan(cell,goal)
+        else:
+            heuristic_function=lambda cell: octile(cell,goal)
+
+        return astar(start,{goal},self.grid.neighbours,heuristic_function,on_expand)
 
     def update(self,cell:Cell,blocked:bool)->float:
         raise NotImplementedError
 
     def stats(self)->dict:
-        raise NotImplementedError
+
+        # return planner statistics
+        return {"areas":0,"doorways":0,"preprocess_s":0.0}

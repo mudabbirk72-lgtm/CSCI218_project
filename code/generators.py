@@ -1,6 +1,8 @@
 from __future__ import annotations
 from collections import deque
 import numpy as np
+
+
 try:  # optional fast path
     from scipy import ndimage as _ndimage
 except Exception:  # pragma: no cover - scipy is optional

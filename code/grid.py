@@ -1,10 +1,8 @@
-
 from __future__ import annotations
-
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-
 import numpy as np
+
 
 Cell = tuple[int, int]
 

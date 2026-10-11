@@ -1,13 +1,8 @@
-
-
 from __future__ import annotations
-
 from collections.abc import Callable, Iterator
-
+from area_graph import Gap
+from grid import Cell, Grid, SearchResult
 import numpy as np
-
-from hierpath.area_graph import Gap
-from hierpath.grid import Cell, Grid, SearchResult
 
 
 def place_doorways(gap: Gap, max_gap: int = 6) -> list[tuple[Cell, Cell]]:

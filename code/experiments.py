@@ -1,10 +1,6 @@
-
-
 from __future__ import annotations
-
 from pathlib import Path
-
-from hierpath.grid import Grid, Scenario, SearchResult
+from grid import Grid, Scenario, SearchResult
 
 METHODS: dict[str, dict] = {
     "Dijkstra":           {"planner": "flat", "algorithm": "dijkstra"},

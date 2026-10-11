@@ -1,7 +1,8 @@
 from __future__ import annotations
 from pathlib import Path
-from hierpath.grid import Grid, Scenario
+from grid import Grid, Scenario
 import numpy as np
+
 
 OPEN_CHARS = frozenset(".GS")
 WALL_CHARS = frozenset("@OTW")

@@ -1,11 +1,8 @@
-
 from __future__ import annotations
-
 from pathlib import Path
-
 import numpy as np
+from grid import Cell, Grid, SearchResult
 
-from hierpath.grid import Cell, Grid, SearchResult
 
 STAGES: list[str] = ["map", "distance", "areas", "graph", "route", "path", "compare"]
 

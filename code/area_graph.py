@@ -1,12 +1,8 @@
-
 from __future__ import annotations
-
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-
+from grid import Cell
 import numpy as np
-
-from hierpath.grid import Cell
 
 
 @dataclass

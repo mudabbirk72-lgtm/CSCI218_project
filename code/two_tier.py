@@ -1,9 +1,6 @@
-
 from __future__ import annotations
-
 from collections.abc import Callable
-
-from hierpath.grid import Cell, Grid, SearchResult
+from grid import Cell, Grid, SearchResult
 
 
 class TwoTierPlanner:

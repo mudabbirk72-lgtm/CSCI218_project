@@ -89,7 +89,12 @@ class Grid:
 
     def restricted_neighbours(self, labels: np.ndarray,
                               allowed: set[int]) -> Callable[[Cell], Iterator[tuple[Cell, float]]]:
-        raise NotImplementedError
+        def neighbours(cell: Cell) -> Iterator[tuple[Cell, float]]:
+            for nxt, cost in self.neighbours(cell):
+                if int(labels[nxt]) in allowed:
+                    yield nxt, cost
+
+        return neighbours
     
 
     def step_cost(self, a: Cell, b: Cell) -> float:

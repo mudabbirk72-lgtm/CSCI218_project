@@ -1,6 +1,9 @@
 from __future__ import annotations
 from pathlib import Path
 from grid import Grid, Scenario, SearchResult
+from search import dijkstra_all
+import numpy as np
+
 
 METHODS: dict[str, dict] = {
     "Dijkstra":           {"planner": "flat", "algorithm": "dijkstra"},
@@ -32,7 +35,42 @@ def make_map(kind: str, size: int, seed: int, **params) -> Grid:
 
 
 def make_scenarios(grid: Grid, n: int, seed: int) -> list[Scenario]:
-    raise NotImplementedError
+    if n < 1:
+        raise ValueError("n must be at least 1")
+    open_cells = np.argwhere(~grid.blocked)
+    if len(open_cells) < 2:
+        raise ValueError("the map needs at least 2 open cells")
+
+    rng = np.random.default_rng(seed)
+    scenarios: list[Scenario] = []
+    attempts = 0
+    while len(scenarios) < n:
+        attempts += 1
+        if attempts > 100 * n:
+            raise ValueError("could not find enough reachable start/goal pairs")
+
+        r, c = open_cells[rng.integers(len(open_cells))]
+        start = (int(r), int(c))
+        dist, _ = dijkstra_all(start, grid.neighbours)
+        reachable = sorted((d, cell) for cell, d in dist.items() if cell != start)
+        if not reachable:
+            continue                       # isolated cell: try another start
+
+        # One search gives distances to every cell, so each start supplies up to three
+        # queries: one short, one medium and one long (thirds of the reachable cells).
+        k = len(reachable)
+        bands = [reachable[: max(1, k // 3)],
+                 reachable[k // 3: max(k // 3 + 1, 2 * k // 3)],
+                 reachable[2 * k // 3:]]
+        for band in bands:
+            if len(scenarios) == n:
+                break
+            if not band:
+                continue
+            d, goal = band[rng.integers(len(band))]
+            scenarios.append(Scenario(start=start, goal=goal, optimal_cost=float(d),
+                                      id=len(scenarios)))
+    return scenarios
 
 
 def suboptimality(cost: float, optimal_cost: float) -> float:

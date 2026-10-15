@@ -105,11 +105,22 @@ class Grid:
 
 
     def path_cost(self, path: list[Cell]) -> float:
-        raise NotImplementedError
+        return float(sum(self.step_cost(a, b) for a, b in zip(path, path[1:])))
 
 
     def is_valid_path(self, path: list[Cell]) -> bool:
-        raise NotImplementedError
+        if not path or not all(self.is_free(cell) for cell in path):
+            return False
+        for a, b in zip(path, path[1:]):
+            dr, dc = abs(a[0] - b[0]), abs(a[1] - b[1])
+            if dr + dc == 1:
+                continue                                  # straight move
+            if dr == 1 and dc == 1 and self.diagonal:     # diagonal: both side cells must be open
+                if self.blocked[b[0], a[1]] or self.blocked[a[0], b[1]]:
+                    return False
+                continue
+            return False                                  # same cell, a jump, or diagonal in 4-way mode
+        return True
 
 
     def block(self, cell: Cell) -> None:

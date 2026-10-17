@@ -2,9 +2,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from grid import Cell, Grid, SearchResult
 import time
+import numpy as np
 from partition import get_partitioner
 from area_graph import AreaGraph
-from search import astar
+from search import astar, octile, manhattan
 
 
 class TwoTierPlanner:
@@ -103,7 +104,167 @@ class TwoTierPlanner:
 
     def refine_nearest(self, route: list[int], start: Cell, goal: Cell,
                        on_expand: Callable[[Cell], None] | None = None) -> SearchResult:
-        raise NotImplementedError
+        # Start measuring the time used by this refinement.
+        start_time = time.perf_counter()
+
+        # Return failure if the area route is empty.
+        if not route:
+            return SearchResult(
+                path=None,
+                cost=float("inf"),
+                expanded=0,
+                generated=0,
+                runtime_s=time.perf_counter() - start_time,
+                success=False,
+                extra={"legs": []},
+            )
+
+        # Initialise the complete path and search statistics.
+        current = start
+        full_path = [start]
+        total_cost = 0.0
+        total_expanded = 0
+        total_generated = 0
+        legs = []
+
+        # Select the heuristic configured for this planner.
+        distance = octile if self.heuristic == "octile" else manhattan
+
+        # Visit each area after the starting area in the route.
+        for next_area in route[1:]:
+            # Get the coordinates of every cell in the next area.
+            area_cells = np.argwhere(self.labels == next_area)
+
+            # Return failure if the area has no cells.
+            if area_cells.size == 0:
+                return SearchResult(
+                    path=None,
+                    cost=float("inf"),
+                    expanded=total_expanded,
+                    generated=total_generated,
+                    runtime_s=time.perf_counter() - start_time,
+                    success=False,
+                    extra={"legs": legs},
+                )
+
+            # Make every cell in the next area a possible target.
+            goal_cells = {
+                (int(cell[0]), int(cell[1]))
+                for cell in area_cells
+            }
+
+            # Find the bounding box of the target area.
+            min_row = int(area_cells[:, 0].min())
+            max_row = int(area_cells[:, 0].max())
+            min_col = int(area_cells[:, 1].min())
+            max_col = int(area_cells[:, 1].max())
+
+            # Estimate the distance from a cell to the target area's box.
+            def heuristic(cell: Cell) -> float:
+                closest = (
+                    min(max(cell[0], min_row), max_row),
+                    min(max(cell[1], min_col), max_col),
+                )
+                return distance(cell, closest)
+
+            # Allow movement through the current area and the next area.
+            current_area = int(self.labels[current])
+            neighbours = self.grid.restricted_neighbours(
+                self.labels, {current_area, next_area}
+            )
+
+            # Use A* to find the nearest reachable cell in the next area.
+            result = astar(
+                current,
+                goal_cells,
+                neighbours,
+                heuristic,
+                on_expand,
+            )
+
+            # Add this search's statistics to the totals.
+            total_expanded += result.expanded
+            total_generated += result.generated
+
+            # Stop if the next area cannot be reached.
+            if not result.success:
+                return SearchResult(
+                    path=None,
+                    cost=float("inf"),
+                    expanded=total_expanded,
+                    generated=total_generated,
+                    runtime_s=time.perf_counter() - start_time,
+                    success=False,
+                    extra={"legs": legs},
+                )
+
+            # Append the path without repeating its starting cell.
+            full_path.extend(result.path[1:])
+            total_cost += result.cost
+
+            # Save information about this part of the journey.
+            legs.append({
+                "from": current,
+                "to": result.path[-1],
+                "cost": result.cost,
+                "expanded": result.expanded,
+            })
+
+            # Continue from the cell reached in the next area.
+            current = result.path[-1]
+
+        # Search for the actual goal within the final area.
+        last_area = route[-1]
+        neighbours = self.grid.restricted_neighbours(
+            self.labels, {last_area}
+        )
+
+        final_result = astar(
+            current,
+            {goal},
+            neighbours,
+            lambda cell: distance(cell, goal),
+            on_expand,
+        )
+
+        # Include the final search's statistics.
+        total_expanded += final_result.expanded
+        total_generated += final_result.generated
+
+        # Return failure if the actual goal cannot be reached.
+        if not final_result.success:
+            return SearchResult(
+                path=None,
+                cost=float("inf"),
+                expanded=total_expanded,
+                generated=total_generated,
+                runtime_s=time.perf_counter() - start_time,
+                success=False,
+                extra={"legs": legs},
+            )
+
+        # Add the final section of the path and its cost.
+        full_path.extend(final_result.path[1:])
+        total_cost += final_result.cost
+
+        # Record the final leg.
+        legs.append({
+            "from": current,
+            "to": goal,
+            "cost": final_result.cost,
+            "expanded": final_result.expanded,
+        })
+
+        # Return the completed path and its statistics.
+        return SearchResult(
+            path=full_path,
+            cost=total_cost,
+            expanded=total_expanded,
+            generated=total_generated,
+            runtime_s=time.perf_counter() - start_time,
+            success=True,
+            extra={"legs": legs},
+        )
 
     def refine_corridor(self, route: list[int], start: Cell, goal: Cell,
                         on_expand: Callable[[Cell], None] | None = None) -> SearchResult:
@@ -111,7 +272,64 @@ class TwoTierPlanner:
 
     def query(self, start: Cell, goal: Cell,
               on_expand: Callable[[Cell], None] | None = None) -> SearchResult:
-        raise NotImplementedError
+        # Start measuring the total query time.
+        query_start = time.perf_counter()
+
+        # Make sure preprocessing has been completed first.
+        if self.grid is None or self.labels is None or self.area_graph is None:
+            raise RuntimeError("preprocess must be called before query")
+
+        # Check that the start and goal are valid open cells.
+        if not self.grid.is_free(start):
+            raise ValueError("start must be an open cell inside the grid")
+
+        if not self.grid.is_free(goal):
+            raise ValueError("goal must be an open cell inside the grid")
+
+        # Find an area-level route using the first search level.
+        tier1 = self.find_route(start, goal)
+
+        # Return failure if the area-level search finds no route.
+        if not tier1.success:
+            return SearchResult(
+                path=None,
+                cost=float("inf"),
+                expanded=tier1.expanded,
+                generated=tier1.generated,
+                runtime_s=time.perf_counter() - query_start,
+                success=False,
+                extra={
+                    "route": tier1.path,
+                    "tier1_expanded": tier1.expanded,
+                },
+            )
+
+        # Refine the area route into a cell-by-cell path.
+        if self.refine == "nearest":
+            tier2 = self.refine_nearest(
+                tier1.path, start, goal, on_expand
+            )
+        else:
+            # Use the corridor method when that option is selected.
+            tier2 = self.refine_corridor(
+                tier1.path, start, goal, on_expand
+            )
+
+        # Keep the refinement details and add the area route details.
+        extra = dict(tier2.extra)
+        extra["route"] = tier1.path
+        extra["tier1_expanded"] = tier1.expanded
+
+        # Combine the statistics from both search levels.
+        return SearchResult(
+            path=tier2.path,
+            cost=tier2.cost,
+            expanded=tier1.expanded + tier2.expanded,
+            generated=tier1.generated + tier2.generated,
+            runtime_s=time.perf_counter() - query_start,
+            success=tier2.success,
+            extra=extra,
+        )
 
     def update(self, cell: Cell, blocked: bool) -> float:
         raise NotImplementedError

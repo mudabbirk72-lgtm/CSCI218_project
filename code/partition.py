@@ -1,8 +1,11 @@
 from __future__ import annotations
 from collections.abc import Callable
-from scipy.ndimage import find_objects, generate_binary_structure
+from scipy.ndimage import distance_transform_cdt, find_objects, generate_binary_structure, maximum_position
 from scipy.ndimage import label as nd_label
+from skimage.morphology import local_maxima
+from skimage.segmentation import watershed as sk_watershed
 import numpy as np
+import heapq
 
 
 def validate(blocked: np.ndarray, labels: np.ndarray) -> np.ndarray:
@@ -181,7 +184,7 @@ def watershed(blocked: np.ndarray, min_seed_distance: int = 2,
 
 def louvain(blocked: np.ndarray, coarsen: int = 4, resolution: float = 1.0,
             seed: int = 0) -> np.ndarray:
-        import networkx as nx
+    import networkx as nx
 
     if coarsen < 1:
         raise ValueError(f"coarsen must be >= 1, got {coarsen}")
@@ -223,7 +226,7 @@ def louvain(blocked: np.ndarray, coarsen: int = 4, resolution: float = 1.0,
 
 
 def get_partitioner(name: str) -> Callable[..., np.ndarray]:
-     methods = {
+    methods = {
         "fixed": fixed_blocks,
         "watershed": watershed,
         "louvain": louvain,

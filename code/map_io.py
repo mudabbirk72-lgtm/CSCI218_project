@@ -7,7 +7,7 @@ import numpy as np
 OPEN_CHARS = frozenset(".GS")
 WALL_CHARS = frozenset("@OTW")
 
-def read_map(path: str | Path, diagonal: bool = True) -> Grid:
+def read_map(path: str | Path, diagonal: bool = True, pad_border: bool = False) -> Grid:
     path = Path(path)
     lines = path.read_text().splitlines()
 
@@ -52,6 +52,9 @@ def read_map(path: str | Path, diagonal: bool = True) -> Grid:
                 blocked[r, c] = True
             elif ch not in OPEN_CHARS:
                 raise ValueError(f"{path}: line {line_no}, column {c + 1}: unknown character {ch!r}")
+
+    if pad_border:
+        blocked = np.pad(blocked, 1, constant_values=True)
     return Grid(blocked, diagonal)
 
 
@@ -63,16 +66,41 @@ def write_map(grid: Grid, path: str | Path) -> None:
     path.write_text(text + "\n")
 
 
-def read_scenarios(path: str | Path) -> list[Scenario]:
-    raise NotImplementedError
+def read_scenarios(path: str | Path, offset: int = 0) -> list[Scenario]:
+    path = Path(path)
+    lines = path.read_text().splitlines()
+    if not lines or not lines[0].strip().lower().startswith("version"):
+        raise ValueError(f"{path}: line 1: expected 'version 1', got {lines[0] if lines else ''!r}")
+
+    scenarios: list[Scenario] = []
+    for i, line in enumerate(lines[1:], start=2):
+        fields = line.split()
+        if not fields:
+            continue
+        if len(fields) != 9:
+            raise ValueError(f"{path}: line {i}: expected 9 fields, got {len(fields)}")
+        try:
+            sx, sy, gx, gy = (int(v) for v in fields[4:8])
+            optimal = float(fields[8])
+        except ValueError:
+            raise ValueError(f"{path}: line {i}: coordinates must be whole numbers "
+                             "and the optimal length a number") from None
+        scenarios.append(Scenario(start=(sy + offset, sx + offset),
+                                  goal=(gy + offset, gx + offset),
+                                  optimal_cost=optimal,
+                                  id=len(scenarios)))
+    return scenarios
 
 
 def write_scenarios(path: str | Path, scenarios: list[Scenario], map_name: str,
                     width: int, height: int) -> None:
-    raise NotImplementedError
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["version 1"]
+    for sc in scenarios:
+        (sr, scol), (gr, gcol) = sc.start, sc.goal
+        lines.append("\t".join([str(int(sc.optimal_cost // 4)), map_name, str(width), str(height),
+                                str(scol), str(sr), str(gcol), str(gr),
+                                f"{sc.optimal_cost:.8f}"]))
+    path.write_text("\n".join(lines) + "\n")
 
-
-def image_to_grid(image_path: str | Path, cell_px: int = 4, threshold: int = 128,
-                  diagonal: bool = True) -> Grid:
-
-    raise NotImplementedError

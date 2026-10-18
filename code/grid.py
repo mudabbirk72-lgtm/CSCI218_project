@@ -124,12 +124,16 @@ class Grid:
 
 
     def block(self, cell: Cell) -> None:
-        raise NotImplementedError
+        if not self.in_bounds(cell):
+            raise ValueError(f"cell {cell} is outside the {self.height}x{self.width} map")
+        self.blocked[cell] = True
 
 
     def unblock(self, cell: Cell) -> None:
-        raise NotImplementedError
+        if not self.in_bounds(cell):
+            raise ValueError(f"cell {cell} is outside the {self.height}x{self.width} map")
+        self.blocked[cell] = False
 
 
     def copy(self) -> Grid:
-        raise NotImplementedError
+        return Grid(self.blocked.copy(), self.diagonal)

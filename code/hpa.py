@@ -2,7 +2,8 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from .area_graph import Gap, find_crossings, find_gaps
 from .grid import Cell, Grid, SearchResult
-from .search import dijkstra_all
+from .search import astar, dijkstra_all, manhattan, octile
+from .partition import get_partitioner
 import numpy as np
 
 
@@ -145,10 +146,73 @@ class DoorwayGraph:
         return list(reversed(self.paths[(v, u)]))
 
     def insert(self, cell: Cell) -> int:
-        raise NotImplementedError
+        area_id = int(self.labels[cell])
+        if area_id < 0:
+            raise ValueError("cell must be an open cell")
+
+        for node_id, (node_area, node_cell) in self.nodes.items():
+            if node_area == area_id and node_cell == cell:
+                return node_id
+
+        node_id = max(self.nodes, default=-1) + 1
+        self.nodes[node_id] = (area_id, cell)
+        self.adj[node_id] = {}
+        self.temporary.add(node_id)
+
+        doorway_ids = self.by_area.get(area_id, [])
+        if not doorway_ids:
+            return node_id
+
+        allowed_neighbours = self.grid.restricted_neighbours(
+            self.labels, {area_id}
+        )
+        targets = {self.nodes[doorway_id][1] for doorway_id in doorway_ids}
+
+        distances, parent = dijkstra_all(
+            cell, allowed_neighbours, targets=targets
+        )
+
+        for doorway_id in doorway_ids:
+            doorway_cell = self.nodes[doorway_id][1]
+            if doorway_cell not in distances:
+                continue
+
+            path = []
+            current = doorway_cell
+            while current is not None:
+                path.append(current)
+                if current == cell:
+                    break
+                current = parent.get(current)
+
+            if path[-1] != cell:
+                continue
+
+            path.reverse()
+            cost = distances[doorway_cell]
+
+            self.adj[node_id][doorway_id] = cost
+            self.adj[doorway_id][node_id] = cost
+            self.paths[(min(node_id, doorway_id),
+                        max(node_id, doorway_id))] = (
+                path if node_id < doorway_id else list(reversed(path))
+            )
+
+        return node_id
 
     def remove_temporary(self) -> None:
-        raise NotImplementedError
+        for node_id in list(self.temporary):
+            for neighbour in list(self.adj.get(node_id, {})):
+                self.adj[neighbour].pop(node_id, None)
+
+            self.adj.pop(node_id, None)
+            self.nodes.pop(node_id, None)
+
+        for edge in list(self.paths):
+            if edge[0] in self.temporary or edge[1] in self.temporary:
+                del self.paths[edge]
+
+        self.temporary.clear()
 
     def rebuild_areas(self, areas: set[int]) -> int:
         raise NotImplementedError
@@ -158,14 +222,167 @@ class HPAPlanner:
 
     def __init__(self, partition: str = "watershed", partition_params: dict | None = None,
                  max_gap: int = 6, heuristic: str = "octile") -> None:
-        raise NotImplementedError
+        if partition not in ("fixed", "watershed", "louvain"):
+            raise ValueError("Unknown partition method")
+        if max_gap < 1:
+            raise ValueError("max_gap must be at least 1")
+        if heuristic not in ("octile", "manhattan"):
+            raise ValueError("Unknown heuristic")
+
+        self.partition = partition
+        self.partition_params = (
+            {} if partition_params is None else dict(partition_params)
+        )
+        self.max_gap = max_gap
+        self.heuristic = heuristic
+
+        self.name = f"HPA-{partition}"
+        self.grid = None
+        self.labels = None
+        self.graph = None
+        self.preprocess_s = 0.0
+        self.last_update = {
+            "areas_rebuilt": 0,
+            "paths_recomputed": 0,
+            "seconds": 0.0,
+        }
 
     def preprocess(self, grid: Grid) -> float:
-        raise NotImplementedError
+        from time import perf_counter
+
+        start_time = perf_counter()
+
+        partitioner = get_partitioner(self.partition)
+        labels = partitioner(grid.blocked, **self.partition_params)
+        graph = DoorwayGraph(grid, labels, max_gap=self.max_gap)
+
+        elapsed = perf_counter() - start_time
+
+        self.grid = grid
+        self.labels = labels
+        self.graph = graph
+        self.preprocess_s = elapsed
+
+        return elapsed
 
     def query(self, start: Cell, goal: Cell,
               on_expand: Callable[[Cell], None] | None = None) -> SearchResult:
-        raise NotImplementedError
+
+        from time import perf_counter
+
+        if self.grid is None or self.labels is None or self.graph is None:
+            raise RuntimeError("Call preprocess() before query()")
+
+        if not self.grid.is_free(start):
+            raise ValueError("Invalid start cell")
+        if not self.grid.is_free(goal):
+            raise ValueError("Invalid goal cell")
+
+        query_start = perf_counter()
+        grid = self.grid
+        labels = self.labels
+        graph = self.graph
+
+        candidate = None
+        if labels[start] == labels[goal]:
+            area_id = int(labels[start])
+            neighbours = grid.restricted_neighbours(labels, {area_id})
+
+            if self.heuristic == "manhattan":
+                heuristic_fn = lambda cell: manhattan(cell, goal)
+            else:
+                heuristic_fn = lambda cell: octile(cell, goal)
+
+            candidate = astar(
+                start,
+                {goal},
+                neighbours,
+                heuristic_fn,
+                on_expand,
+            )
+
+        route = []
+        tier1_expanded = 0
+        tier1_generated = 0
+        hierarchical_path = None
+        hierarchical_cost = float("inf")
+
+        try:
+            start_node = graph.insert(start)
+            goal_node = graph.insert(goal)
+
+            tier1_result = astar(
+                start_node,
+                {goal_node},
+                graph.neighbours,
+                graph.heuristic(goal, self.heuristic),
+                (
+                    (lambda node: on_expand(graph.nodes[node][1]))
+                    if on_expand is not None else None
+                ),
+            )
+
+            tier1_expanded = tier1_result.expanded
+            tier1_generated = tier1_result.generated
+
+            if tier1_result.success and tier1_result.path is not None:
+                route = tier1_result.path
+                hierarchical_path = []
+
+                for u, v in zip(route, route[1:]):
+                    segment = graph.segment(u, v)
+
+                    if hierarchical_path:
+                        hierarchical_path.extend(segment[1:])
+                    else:
+                        hierarchical_path.extend(segment)
+
+                if len(route) == 1:
+                    hierarchical_path = [graph.nodes[route[0]][1]]
+
+                hierarchical_cost = tier1_result.cost
+
+        finally:
+            graph.remove_temporary()
+
+        candidate_success = candidate is not None and candidate.success
+        hierarchy_success = hierarchical_path is not None
+
+        if candidate_success and (
+            not hierarchy_success or candidate.cost <= hierarchical_cost
+        ):
+            chosen_path = candidate.path
+            chosen_cost = candidate.cost
+            success = True
+        elif hierarchy_success:
+            chosen_path = hierarchical_path
+            chosen_cost = hierarchical_cost
+            success = True
+        else:
+            chosen_path = None
+            chosen_cost = float("inf")
+            success = False
+
+        expanded = (
+            candidate.expanded if candidate is not None else 0
+        ) + tier1_expanded
+        generated = (
+            candidate.generated if candidate is not None else 0
+        ) + tier1_generated
+
+        return SearchResult(
+            path=chosen_path,
+            cost=chosen_cost,
+            expanded=expanded,
+            generated=generated,
+            runtime_s=perf_counter() - query_start,
+            success=success,
+            extra={
+                "route": route,
+                "tier1_expanded": tier1_expanded,
+            },
+        )
+
 
     def update(self, cell: Cell, blocked: bool) -> float:
         raise NotImplementedError

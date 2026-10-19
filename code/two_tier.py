@@ -268,7 +268,55 @@ class TwoTierPlanner:
 
     def refine_corridor(self, route: list[int], start: Cell, goal: Cell,
                         on_expand: Callable[[Cell], None] | None = None) -> SearchResult:
-        raise NotImplementedError
+        # Start measuring the time used by corridor refinement.
+        start_time = time.perf_counter()
+
+        # Return failure if the area route is empty.
+        if not route:
+            return SearchResult(
+                path=None,
+                cost=float("inf"),
+                expanded=0,
+                generated=0,
+                runtime_s=time.perf_counter() - start_time,
+                success=False,
+                extra={"route": route},
+            )
+
+        # Allow A* to move only through areas in the tier-1 route.
+        allowed_areas = set(route)
+        neighbours = self.grid.restricted_neighbours(
+            self.labels, allowed_areas
+        )
+
+        # Select the heuristic configured for this planner.
+        distance = octile if self.heuristic == "octile" else manhattan
+
+        # Estimate the remaining distance to the actual goal.
+        heuristic = lambda cell: distance(cell, goal)
+
+        # Search directly from the start to the goal inside the corridor.
+        result = astar(
+            start,
+            {goal},
+            neighbours,
+            heuristic,
+            on_expand,
+        )
+
+        # Return the result with the corridor route recorded.
+        return SearchResult(
+            path=result.path,
+            cost=result.cost,
+            expanded=result.expanded,
+            generated=result.generated,
+            runtime_s=time.perf_counter() - start_time,
+            success=result.success,
+            extra={
+                **(result.extra or {}),
+                "route": route,
+            },
+        )
 
     def query(self, start: Cell, goal: Cell,
               on_expand: Callable[[Cell], None] | None = None) -> SearchResult:
@@ -332,7 +380,41 @@ class TwoTierPlanner:
         )
 
     def update(self, cell: Cell, blocked: bool) -> float:
-        raise NotImplementedError
+        # Start measuring the complete update time.
+        start_time = time.perf_counter()
+
+        # Make sure preprocessing has already assigned the grid.
+        if self.grid is None:
+            raise RuntimeError("Call preprocess() before update()")
+
+        # Change the requested cell's blocked/open state.
+        if blocked:
+            self.grid.block(cell)
+        else:
+            self.grid.unblock(cell)
+
+        # Rebuild the partition and area graph from the changed grid.
+        self.preprocess(self.grid)
+
+        # Return the total time taken for the update and rebuild.
+        return time.perf_counter() - start_time
 
     def stats(self) -> dict:
-        raise NotImplementedError
+        # Return empty statistics if preprocessing has not been completed.
+        if self.labels is None:
+            return {
+                "areas": 0,
+                "doorways": 0,
+                "preprocess_s": self.preprocess_s,
+            }
+
+        # Count the distinct valid area labels.
+        valid_labels = self.labels[self.labels >= 0]
+        area_count = int(np.unique(valid_labels).size)
+
+        # Return the planner's preprocessing statistics.
+        return {
+            "areas": area_count,
+            "doorways": 0,
+            "preprocess_s": self.preprocess_s,
+        }

@@ -239,8 +239,22 @@ class FlatPlanner:
 
         return astar(start,{goal},self.grid.neighbours,heuristic_function,on_expand)
 
-    def update(self,cell:Cell,blocked:bool)->float:
-        raise NotImplementedError
+    def update(self, cell: Cell, blocked: bool) -> float:
+        # Start measuring the time needed to update the grid.
+        start_time = time.perf_counter()
+
+        # Make sure the grid has been assigned.
+        if self.grid is None:
+            raise RuntimeError("Call preprocess() before update()")
+
+        # Block or unblock the requested cell.
+        if blocked:
+            self.grid.block(cell)
+        else:
+            self.grid.unblock(cell)
+
+        # Return the time taken to update the grid.
+        return time.perf_counter() - start_time
 
     def stats(self)->dict:
 

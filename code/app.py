@@ -21,15 +21,7 @@ HIER_PATH, FLAT_PATH, WALL, OPEN = (214, 40, 160), (0, 200, 220), (34, 36, 44), 
 
 
 def area_color(area: int) -> tuple[int, int, int]:
-    """A fixed colour for an area id, so an area keeps its colour between frames.
-
-    Args:
-        area (int): Area id, >= 0.
-
-    Returns:
-        tuple[int, int, int]: An ``(R, G, B)`` colour, each 0-255. Different ids give
-        visibly different colours.
-    """
+    
     if area < 0:
         return (90, 90, 96)
     # golden-ratio hue steps spread consecutive ids around the colour wheel
@@ -39,7 +31,7 @@ def area_color(area: int) -> tuple[int, int, int]:
 
 
 def _base(walls: np.ndarray, labels: np.ndarray | None = None) -> np.ndarray:
-    """One RGB pixel per cell: walls dark, open cells light or coloured by area."""
+    
     img = np.where(walls[..., None], WALL, OPEN).astype(np.uint8)
     if labels is not None:
         ok = (labels >= 0) & ~walls
@@ -49,7 +41,7 @@ def _base(walls: np.ndarray, labels: np.ndarray | None = None) -> np.ndarray:
 
 
 def _scale(img: np.ndarray, px: int) -> pygame.Surface:
-    """Turn a ``(rows, cols, 3)`` image into a surface with ``px`` pixels per cell."""
+    
     surf = pygame.surfarray.make_surface(np.ascontiguousarray(img.swapaxes(0, 1)))
     return pygame.transform.scale(surf, (img.shape[1] * px, img.shape[0] * px))
 
@@ -75,7 +67,7 @@ class App:
 
     # helpers
     def _fit(self) -> None:
-        """Pick ``cell_px`` and the map origin so the map fits left of the panel."""
+        
         w, h = self.screen.get_size()
         rows, cols = self.walls.shape
         self.cell_px = max(1, min((w - PANEL) // cols, h // rows))
@@ -84,7 +76,7 @@ class App:
 
     
     def _use(self, grid: Grid, reset: bool = True) -> None:
-        """Preprocess both planners on ``grid`` (the old map stays if this raises)."""
+        
         planner, baseline = experiments.METHODS[self.method](), FlatPlanner()
         self.prep = float(planner.preprocess(grid) or 0)
         baseline.preprocess(grid)
@@ -100,7 +92,7 @@ class App:
 
     
     def _rebuild(self) -> None:
-        """Apply pending wall edits: new grid, new preprocessing, query re-run."""
+        
         if not self.dirty:
             return
         walls, start, goal = self.walls.copy(), self.start, self.goal
@@ -179,11 +171,9 @@ class App:
             self.msg = f"Query failed: {err}"
 
     def next_stage(self) -> None:
-        """Show the next stage (wraps around)."""
         self.stage, self._surf = (self.stage + 1) % len(STAGES), None
 
     def prev_stage(self) -> None:
-        """Show the previous stage (wraps around)."""
         self.stage, self._surf = (self.stage - 1) % len(STAGES), None
 
     # editing
@@ -200,7 +190,6 @@ class App:
         return (int(r), int(c)) if 0 <= r < self.walls.shape[0] and 0 <= c < self.walls.shape[1] else None
 
     def toggle_editor(self) -> None:
-        """Switch editor mode; leaving it re-preprocesses the planners on the edited map."""
         self.editing, self._surf = not self.editing, None
         if self.editing:
             self.msg = "EDITOR: left drag = wall, right drag = erase, [ ] = brush"
@@ -214,14 +203,7 @@ class App:
         self.dirty, self._surf = True, None
 
     def save_map(self, path: str | Path) -> None:
-        """Write the current map (including pending edits) to a ``.map`` file.
 
-        Args:
-            path (str | Path): Destination file.
-
-        Returns:
-            None.
-        """
         self._rebuild()
         write_map(self.grid, path)
         self.msg = f"Saved {path}"
@@ -315,14 +297,7 @@ class App:
         pygame.display.flip()
 
     def handle_event(self, event) -> bool:
-        """React to one mouse or keyboard event.
 
-        Args:
-            event: A ``pygame.event.Event``.
-
-        Returns:
-            bool: ``False`` if the window should close (quit event or ESC), else ``True``.
-        """
         t = event.type
         free = lambda s: next(p for i in range(999) if not (p := Path(f"{s[0]}{i or ''}{s[1]}")).exists())
         if t == pygame.QUIT:
@@ -420,7 +395,6 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         pygame.quit()
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

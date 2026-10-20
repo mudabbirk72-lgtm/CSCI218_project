@@ -2,6 +2,7 @@ from __future__ import annotations
 from pathlib import Path
 from grid import Grid, Scenario, SearchResult
 from search import dijkstra_all
+from pathlib import Path
 import numpy as np
 import math
 
@@ -152,10 +153,108 @@ def result_row(result: SearchResult, scenario: Scenario, planner, *, experiment:
     return {key: row[key] for key in CSV_COLUMNS}
 
 
+def _load_maps(config: dict, config_dir: Path):
+    """Yield one dict per map in the config: grid, name, kind, size, seed, scenarios."""
+    entries = config.get("maps")
+    if not entries:
+        raise ValueError("the config has no 'maps' list")
+    for entry in entries:
+        entry = dict(entry)
+        kind = entry.pop("kind")
+        if kind == "file":
+            import map_io
+            pad = entry.get("pad_border", True)
+            for p in entry["paths"]:
+                path = Path(p)
+                if not path.is_absolute() and not path.exists():
+                    path = config_dir / path            # also allow paths relative to the config
+                if not path.exists():
+                    raise FileNotFoundError(f"map file not found: {p}")
+                grid = map_io.read_map(path, pad_border=pad)
+                scen_path = path.with_name(path.name + ".scen")
+                scenarios = (map_io.read_scenarios(scen_path, offset=1 if pad else 0)
+                             if scen_path.exists() else None)
+                yield {"grid": grid, "name": path.stem, "kind": entry.get("label", "benchmark"),
+                       "size": max(grid.height, grid.width) - (2 if pad else 0),
+                       "seed": -1, "scenarios": scenarios}
+        else:
+            params = entry.get("params", {})
+            for size in entry["sizes"]:
+                for seed in entry["seeds"]:
+                    grid = make_map(kind, size, seed, **params)
+                    yield {"grid": grid, "name": f"{kind}_{size}_s{seed}", "kind": kind,
+                           "size": size, "seed": seed, "scenarios": None}
+
+
+def _pick_evenly(scenarios: list[Scenario], n: int) -> list[Scenario]:
+    """n scenarios spread through the list (a .scen file runs from short to long)."""
+    if len(scenarios) <= n:
+        return list(scenarios)
+    step = len(scenarios) / n
+    return [scenarios[int(i * step)] for i in range(n)]
+
+
 def run_experiment(config_path: str | Path, dry_run: bool = False) -> Path:
-    raise NotImplementedError
+    """Run a whole experiment from its YAML config and save the CSV."""
+    import csv
+    import time
+
+    import yaml
+
+    config_path = Path(config_path)
+    with config_path.open() as f:                      # FileNotFoundError if missing
+        config = yaml.safe_load(f)
+
+    name = config["name"]
+    out = Path(config["output"])
+    n_queries = 5 if dry_run else int(config.get("queries_per_map", 50))
+    repeats = int(config.get("repeats", 1))
+    methods = list(config["methods"])
+    unknown = [m for m in methods if m not in METHODS]
+    if unknown:                                        # fail before any long work starts
+        raise KeyError(f"unknown method(s) {unknown}; choose from {list(METHODS)}")
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    with out.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+        writer.writeheader()
+        for m in _load_maps(config, config_path.parent):
+            grid = m["grid"]
+            if m["scenarios"]:
+                scenarios = _pick_evenly(m["scenarios"], n_queries)
+            else:
+                seed = m["seed"] if m["seed"] >= 0 else 0
+                scenarios = make_scenarios(grid, n_queries, seed)
+            print(f"{m['name']} ({grid.height}x{grid.width}, {len(scenarios)} queries)")
+            for method in methods:
+                planner = make_planner(method)
+                planner.preprocess(grid)
+                results = run_queries(planner, grid, scenarios, repeats)
+                for result, sc in zip(results, scenarios):
+                    writer.writerow(result_row(result, sc, planner, experiment=name,
+                                               map_name=m["name"], map_kind=m["kind"],
+                                               map_size=m["size"], map_seed=m["seed"]))
+                f.flush()                              # a crash later loses nothing done
+                ok = sum(r.success for r in results)
+                worst = max((suboptimality(r.cost, s.optimal_cost)
+                             for r, s in zip(results, scenarios) if r.success), default=math.nan)
+                print(f"  {method:<20} {ok}/{len(results)} solved, worst suboptimality {worst:.3f}")
+            if dry_run:
+                break
+    print(f"Done in {time.perf_counter() - started:.1f}s. Results: {out}")
+    return out
 
 
 def run_dynamic_experiment(grid: Grid, n_changes: int, seed: int,
                            partition: str = "watershed") -> list[dict]:
     raise NotImplementedError
+
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser(description="Run an experiment from a YAML config.")
+    ap.add_argument("config", help="e.g. configs/pilot.yaml")
+    ap.add_argument("--dry-run", action="store_true", help="first map only, 5 queries")
+    args = ap.parse_args()
+    run_experiment(args.config, dry_run=args.dry_run)

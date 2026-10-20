@@ -214,8 +214,121 @@ class DoorwayGraph:
 
         self.temporary.clear()
 
+
     def rebuild_areas(self, areas: set[int]) -> int:
-        raise NotImplementedError
+        areas = {int(area) for area in areas}
+        if not areas:
+            return 0
+
+        old_nodes = {
+            node_id
+            for node_id, (area_id, _) in self.nodes.items()
+            if area_id in areas and node_id not in self.temporary
+        }
+
+        for node_id in old_nodes:
+            for neighbour in list(self.adj.get(node_id, {})):
+                self.adj[neighbour].pop(node_id, None)
+            self.adj.pop(node_id, None)
+            self.nodes.pop(node_id, None)
+
+        for edge in list(self.paths):
+            if edge[0] in old_nodes or edge[1] in old_nodes:
+                del self.paths[edge]
+
+        for area_id in areas:
+            self.by_area.pop(area_id, None)
+
+        node_lookup = {
+            (area_id, cell): node_id
+            for node_id, (area_id, cell) in self.nodes.items()
+        }
+
+        def add_node(area_id: int, cell: Cell) -> int:
+            key = (area_id, cell)
+            if key in node_lookup:
+                return node_lookup[key]
+
+            node_id = max(self.nodes, default=-1) + 1
+            node_lookup[key] = node_id
+            self.nodes[node_id] = key
+            self.adj[node_id] = {}
+
+            if area_id in areas:
+                self.by_area.setdefault(area_id, []).append(node_id)
+
+            return node_id
+
+        def add_edge(
+            u: int, v: int, cost: float, path: list[Cell]
+        ) -> None:
+            self.adj[u][v] = cost
+            self.adj[v][u] = cost
+            self.paths[(min(u, v), max(u, v))] = (
+                path if u < v else list(reversed(path))
+            )
+
+        crossings = find_crossings(self.grid.blocked, self.labels)
+        gaps = find_gaps(crossings)
+
+        for gap in gaps:
+            if gap.a not in areas and gap.b not in areas:
+                continue
+
+            for cell_a, cell_b in place_doorways(gap, self.max_gap):
+                key_a = (gap.a, cell_a)
+                key_b = (gap.b, cell_b)
+
+                if gap.a not in areas and key_a not in node_lookup:
+                    continue
+                if gap.b not in areas and key_b not in node_lookup:
+                    continue
+
+                u = add_node(gap.a, cell_a)
+                v = add_node(gap.b, cell_b)
+                add_edge(u, v, 1.0, [cell_a, cell_b])
+
+
+        paths_recomputed = 0
+
+        for area_id in areas:
+            doorway_ids = self.by_area.get(area_id, [])
+            allowed_neighbours = self.grid.restricted_neighbours(
+                self.labels, {area_id}
+            )
+
+            for u in doorway_ids:
+                start_cell = self.nodes[u][1]
+                distances, parent = dijkstra_all(
+                    start_cell, allowed_neighbours
+                )
+
+                for v in doorway_ids:
+                    if u >= v:
+                        continue
+
+                    goal_cell = self.nodes[v][1]
+                    if goal_cell not in distances:
+                        continue
+
+                    path = []
+                    current = goal_cell
+
+                    while current is not None:
+                        path.append(current)
+                        if current == start_cell:
+                            break
+                        current = parent.get(current)
+
+                    if path[-1] != start_cell:
+                        continue
+
+                    path.reverse()
+                    add_edge(u, v, distances[goal_cell], path)
+                    paths_recomputed += 1
+
+        return paths_recomputed
+
 
 
 class HPAPlanner:
@@ -387,5 +500,22 @@ class HPAPlanner:
     def update(self, cell: Cell, blocked: bool) -> float:
         raise NotImplementedError
 
+
     def stats(self) -> dict:
-        raise NotImplementedError
+        areas = (
+            int(np.unique(self.labels[self.labels >= 0]).size)
+            if self.labels is not None
+            else 0
+        )
+
+        doorways = (
+            sum(len(node_ids) for node_ids in self.graph.by_area.values())
+            if self.graph is not None
+            else 0
+        )
+
+        return {
+            "areas": areas,
+            "doorways": doorways,
+            "preprocess_s": float(self.preprocess_s),
+        }

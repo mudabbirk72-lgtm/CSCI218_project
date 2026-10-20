@@ -220,6 +220,7 @@ class DoorwayGraph:
         if not areas:
             return 0
 
+
         old_nodes = {
             node_id
             for node_id, (area_id, _) in self.nodes.items()
@@ -253,7 +254,6 @@ class DoorwayGraph:
             node_lookup[key] = node_id
             self.nodes[node_id] = key
             self.adj[node_id] = {}
-
             if area_id in areas:
                 self.by_area.setdefault(area_id, []).append(node_id)
 
@@ -497,8 +497,139 @@ class HPAPlanner:
         )
 
 
+
     def update(self, cell: Cell, blocked: bool) -> float:
-        raise NotImplementedError
+        """Block or open one cell and repair the affected areas locally."""
+        from time import perf_counter
+
+        start_time = perf_counter()
+
+        if self.grid is None or self.labels is None or self.graph is None:
+            raise RuntimeError("Call preprocess() before update()")
+
+        if not self.grid.in_bounds(cell):
+            raise ValueError(
+                f"cell {cell} is outside the "
+                f"{self.grid.height}x{self.grid.width} map"
+            )
+
+        if not isinstance(blocked, (bool, np.bool_)):
+            raise TypeError("blocked must be a bool")
+
+        grid = self.grid
+        labels = self.labels
+        blocked = bool(blocked)
+
+        if bool(grid.blocked[cell]) == blocked:
+            elapsed = perf_counter() - start_time
+            self.last_update = {
+                "areas_rebuilt": 0,
+                "paths_recomputed": 0,
+                "seconds": elapsed,
+            }
+            return elapsed
+
+        row, col = cell
+
+        affected = set()
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                r, c = row + dr, col + dc
+                if 0 <= r < grid.height and 0 <= c < grid.width:
+                    area_id = int(labels[r, c])
+                    if area_id >= 0:
+                        affected.add(area_id)
+
+        old_area = int(labels[cell])
+        if old_area >= 0:
+            affected.add(old_area)
+
+        if blocked:
+            grid.block(cell)
+            labels[cell] = -1
+
+            if old_area >= 0:
+                remaining = {
+                    (int(r), int(c))
+                    for r, c in np.argwhere(labels == old_area)
+                }
+                components = []
+
+                while remaining:
+                    seed = min(remaining)
+                    remaining.remove(seed)
+                    stack = [seed]
+                    component = []
+
+                    while stack:
+                        current = stack.pop()
+                        component.append(current)
+
+                        for neighbour, _ in grid.neighbours(current):
+                            if (
+                                neighbour in remaining
+                                and int(labels[neighbour]) == old_area
+                            ):
+                                remaining.remove(neighbour)
+                                stack.append(neighbour)
+
+                    components.append(sorted(component))
+
+                components.sort(key=lambda component: component[0])
+                next_id = int(labels.max()) + 1
+
+                for component in components[1:]:
+                    for piece_cell in component:
+                        labels[piece_cell] = next_id
+                    affected.add(next_id)
+                    next_id += 1
+
+        else:
+            grid.unblock(cell)
+
+            counts = {}
+            for dr in (-1, 0, 1):
+                for dc in (-1, 0, 1):
+                    if dr == 0 and dc == 0:
+                        continue
+
+                    r, c = row + dr, col + dc
+                    if not (0 <= r < grid.height and 0 <= c < grid.width):
+                        continue
+
+                    area_id = int(labels[r, c])
+                    if area_id >= 0:
+                        counts[area_id] = counts.get(area_id, 0) + 1
+
+            if counts:
+                chosen_area = min(
+                    counts, key=lambda area_id: (-counts[area_id], area_id)
+                )
+            else:
+                chosen_area = int(labels.max()) + 1
+
+            labels[cell] = chosen_area
+            affected.add(chosen_area)
+
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                r, c = row + dr, col + dc
+                if 0 <= r < grid.height and 0 <= c < grid.width:
+                    area_id = int(labels[r, c])
+                    if area_id >= 0:
+                        affected.add(area_id)
+
+        paths_recomputed = self.graph.rebuild_areas(affected)
+        elapsed = perf_counter() - start_time
+
+        self.last_update = {
+            "areas_rebuilt": len(affected),
+            "paths_recomputed": paths_recomputed,
+            "seconds": elapsed,
+        }
+
+        return elapsed
+
 
 
     def stats(self) -> dict:

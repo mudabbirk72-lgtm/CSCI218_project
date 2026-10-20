@@ -255,13 +255,125 @@ def run_experiment(config_path: str | Path, dry_run: bool = False) -> Path:
 
 def run_dynamic_experiment(grid: Grid, n_changes: int, seed: int,
                            partition: str = "watershed") -> list[dict]:
-    raise NotImplementedError
+    """Measure local repair against a full rebuild (the dynamic-map experiment)."""
+    import time
+    from hpa import DoorwayGraph, HPAPlanner
+
+    grid = grid.copy()                               # never change the caller's map
+    rng = np.random.default_rng(seed)
+    planner = HPAPlanner(partition=partition)
+    planner.preprocess(grid)
+
+    trials = []
+    for _ in range(n_changes):
+        # 1. pick a random doorway cell (a permanent node of the doorway graph)
+        doorways = sorted({cell for node, (_, cell) in planner.graph.nodes.items()
+                           if node not in planner.graph.temporary})
+        cell = doorways[rng.integers(len(doorways))]
+
+        # 2. block it: local repair vs full rebuild
+        repair_s = planner.update(cell, True)
+        info = dict(planner.last_update)
+
+        fresh = HPAPlanner(partition=partition)
+        t = time.perf_counter()
+        fresh.preprocess(grid)
+        rebuild_s = time.perf_counter() - t
+
+        # 3. the repaired graph must answer like a graph built from scratch with the
+        #    same labels (the spec's definition of a correct repair)
+        reference = HPAPlanner(partition=partition)
+        reference.grid, reference.labels = grid, planner.labels.copy()
+        reference.graph = DoorwayGraph(grid, reference.labels, planner.max_gap)
+
+        free = np.argwhere(~grid.blocked)
+        answers_match = True
+        for _ in range(10):
+            a, b = free[rng.choice(len(free), 2, replace=False)]
+            start, goal = (int(a[0]), int(a[1])), (int(b[0]), int(b[1]))
+            got, want = planner.query(start, goal), reference.query(start, goal)
+            if got.success != want.success or (
+                    got.success and not math.isclose(got.cost, want.cost, rel_tol=1e-9)):
+                answers_match = False
+
+        trials.append({"cell": cell, "repair_s": float(repair_s), "rebuild_s": rebuild_s,
+                       "areas_rebuilt": int(info.get("areas_rebuilt", 0)),
+                       "paths_recomputed": int(info.get("paths_recomputed", 0)),
+                       "answers_match": answers_match})
+
+        # 4. open the cell again so the next trial starts from (almost) the same map
+        planner.update(cell, False)
+    return trials
+
+
+DYNAMIC_COLUMNS: list[str] = [
+    "experiment", "map_name", "map_kind", "map_size", "map_seed", "partition", "trial",
+    "cell_row", "cell_col", "repair_s", "rebuild_s", "speedup", "areas_rebuilt",
+    "paths_recomputed", "answers_match",
+]
+"""Columns of the dynamic experiment's CSV (one row per block/unblock trial)."""
+
+
+def run_dynamic_from_config(config_path: str | Path, dry_run: bool = False) -> Path:
+    """Run the dynamic-map experiment from its YAML config and save the CSV."""
+    import csv
+    import time
+
+    import yaml
+
+    config_path = Path(config_path)
+    with config_path.open() as f:
+        config = yaml.safe_load(f)
+
+    name = config["name"]
+    out = Path(config["output"])
+    changes = 2 if dry_run else int(config.get("changes", 20))
+    seed = int(config.get("seed", 0))
+    partitions = config.get("partitions", {})          # map kind -> partition method
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    with out.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=DYNAMIC_COLUMNS)
+        writer.writeheader()
+        for m in _load_maps(config, config_path.parent):
+            partition = partitions.get(m["kind"], "watershed")
+            trials = run_dynamic_experiment(m["grid"], changes, seed, partition)
+            for i, t in enumerate(trials):
+                writer.writerow({
+                    "experiment": name, "map_name": m["name"], "map_kind": m["kind"],
+                    "map_size": m["size"], "map_seed": m["seed"], "partition": partition,
+                    "trial": i, "cell_row": t["cell"][0], "cell_col": t["cell"][1],
+                    "repair_s": t["repair_s"], "rebuild_s": t["rebuild_s"],
+                    "speedup": t["rebuild_s"] / max(t["repair_s"], 1e-9),
+                    "areas_rebuilt": t["areas_rebuilt"],
+                    "paths_recomputed": t["paths_recomputed"],
+                    "answers_match": t["answers_match"],
+                })
+            f.flush()
+            ok = sum(t["answers_match"] for t in trials)
+            rep = sorted(t["repair_s"] for t in trials)[len(trials) // 2]
+            reb = sorted(t["rebuild_s"] for t in trials)[len(trials) // 2]
+            print(f"{m['name']:<16} {partition:<10} median repair {1000 * rep:7.1f} ms   "
+                  f"median rebuild {1000 * reb:8.1f} ms   ({reb / max(rep, 1e-9):5.1f}x faster)   "
+                  f"answers match {ok}/{len(trials)}", flush=True)
+            if dry_run:
+                break
+    print(f"Done in {time.perf_counter() - started:.1f}s. Results: {out}")
+    return out
 
 
 if __name__ == "__main__":
     import argparse
+    import yaml
+
     ap = argparse.ArgumentParser(description="Run an experiment from a YAML config.")
-    ap.add_argument("config", help="e.g. configs/pilot.yaml")
-    ap.add_argument("--dry-run", action="store_true", help="first map only, 5 queries")
+    ap.add_argument("config", help="e.g. configs/pilot.yaml or configs/dynamic.yaml")
+    ap.add_argument("--dry-run", action="store_true", help="first map only, a few queries/changes")
     args = ap.parse_args()
-    run_experiment(args.config, dry_run=args.dry_run)
+    with open(args.config) as f:
+        experiment_type = (yaml.safe_load(f) or {}).get("type", "queries")
+    if experiment_type == "dynamic":
+        run_dynamic_from_config(args.config, dry_run=args.dry_run)
+    else:
+        run_experiment(args.config, dry_run=args.dry_run)

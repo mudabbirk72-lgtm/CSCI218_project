@@ -1,7 +1,8 @@
 from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from grid import Cell
+from grid import Cell, SQRT2
+from scipy.ndimage import find_objects
 import numpy as np
 
 
@@ -103,11 +104,15 @@ def find_gaps(
     return gaps
 
 
+def _octile(a: tuple[float, float], b: tuple[float, float]) -> float:
+    dr, dc = abs(a[0] - b[0]), abs(a[1] - b[1])
+    return max(dr, dc) + (SQRT2 - 1) * min(dr, dc)
+
 
 class AreaGraph:
 
     def __init__(self, blocked: np.ndarray, labels: np.ndarray, cost_mode: str = "centroid") -> None:
-         if cost_mode not in ("hop", "centroid"):
+        if cost_mode not in ("hop", "centroid"):
             raise ValueError(
                 f"Unknown cost_mode {cost_mode!r}; expected 'hop' or 'centroid'"
             )
@@ -163,7 +168,7 @@ class AreaGraph:
          return iter(self._adj[area])
 
     def heuristic(self, goal_area: int) -> Callable[[int], float]:
-                if self.cost_mode == "hop":
+        if self.cost_mode == "hop":
             return lambda area: 0.0
 
         centroids = self.centroids

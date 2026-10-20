@@ -1,0 +1,11 @@
+name: pilot
+output: results/pilot.csv
+queries_per_map: 20
+repeats: 1
+maps:
+  - {kind: rooms, sizes: [64, 128], seeds: [0, 1]}
+  - {kind: random, sizes: [64], seeds: [0]}
+  - {kind: maze, sizes: [64], seeds: [0]}
+  - {kind: file, paths: ["maps/benchmark/street/Berlin_0_256.map", "maps/benchmark/street/Paris_0_256.map"]}
+methods: ["Dijkstra", "A*", "Basic-fixed", "Basic-watershed", "Basic-louvain",
+          "Corridor-fixed", "Corridor-watershed", "HPA-fixed", "HPA-watershed"]

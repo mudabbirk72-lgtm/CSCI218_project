@@ -1,0 +1,14 @@
+name: street
+output: results/street.csv
+queries_per_map: 50
+repeats: 1
+maps:
+  - kind: file
+    label: street
+    paths: ["maps/benchmark/street/Berlin_0_256.map", "maps/benchmark/street/Berlin_0_512.map",
+            "maps/benchmark/street/Berlin_0_1024.map", "maps/benchmark/street/Boston_0_256.map",
+            "maps/benchmark/street/Boston_0_512.map", "maps/benchmark/street/Boston_0_1024.map",
+            "maps/benchmark/street/Paris_0_256.map", "maps/benchmark/street/Paris_0_512.map",
+            "maps/benchmark/street/Paris_0_1024.map"]
+methods: ["A*", "Basic-fixed", "Basic-watershed", "Corridor-fixed", "Corridor-watershed",
+          "HPA-fixed", "HPA-watershed"]

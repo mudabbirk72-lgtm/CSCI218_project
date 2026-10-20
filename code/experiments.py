@@ -17,6 +17,13 @@ METHODS: dict[str, dict] = {
     "Corridor-watershed": {"planner": "two_tier", "partition": "watershed", "refine": "corridor"},
     "HPA-fixed":          {"planner": "hpa", "partition": "fixed"},
     "HPA-watershed":      {"planner": "hpa", "partition": "watershed"},
+    "HPA-louvain":        {"planner": "hpa", "partition": "louvain"},
+    "HPA-watershed-nocap":   {"planner": "hpa", "partition": "watershed",
+                              "partition_params": {"max_area_size": None}},
+    "HPA-watershed-cap1024": {"planner": "hpa", "partition": "watershed",
+                              "partition_params": {"max_area_size": 1024}},
+    "HPA-watershed-cap256":  {"planner": "hpa", "partition": "watershed",
+                              "partition_params": {"max_area_size": 256}},
 }
 
 

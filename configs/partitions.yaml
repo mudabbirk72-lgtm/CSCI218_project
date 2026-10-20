@@ -1,0 +1,12 @@
+name: partitions
+output: results/partitions.csv
+queries_per_map: 50
+repeats: 1
+maps:
+  - {kind: rooms,  sizes: [256, 512], seeds: [2, 3, 4]}
+  - {kind: random, sizes: [256], seeds: [2, 3, 4]}
+  - {kind: maze,   sizes: [256], seeds: [2, 3, 4]}
+methods: ["A*", "Basic-fixed", "Basic-watershed", "Basic-louvain",
+          "Corridor-fixed", "Corridor-watershed",
+          "HPA-fixed", "HPA-watershed", "HPA-louvain",
+          "HPA-watershed-nocap", "HPA-watershed-cap1024", "HPA-watershed-cap256"]

@@ -1,0 +1,10 @@
+name: scaling
+output: results/scaling.csv
+queries_per_map: 50
+repeats: 1
+maps:
+  - {kind: rooms,  sizes: [64, 128, 256, 512, 1024], seeds: [2, 3, 4]}
+  - {kind: random, sizes: [64, 128, 256, 512, 1024], seeds: [2, 3, 4]}
+  - {kind: maze,   sizes: [64, 128, 256, 512, 1024], seeds: [2, 3, 4]}
+methods: ["A*", "Basic-fixed", "Basic-watershed", "Corridor-fixed", "Corridor-watershed",
+          "HPA-fixed", "HPA-watershed"]

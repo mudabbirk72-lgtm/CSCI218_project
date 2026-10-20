@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+from scipy import stats
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np

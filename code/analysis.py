@@ -356,36 +356,62 @@ def plot_breakeven(df: pd.DataFrame, out: str | Path, method: str, baseline: str
 
 
 def plot_repair(trials: list[dict], out: str | Path) -> Path:
-    """Plot repair and full-rebuild timings from dynamic experiment trials."""
+    """Figure: local repair time against full rebuild time, one pair of bars per map.
 
+    Bars show the median over the map's trials; dots show every trial. The y-axis is
+    logarithmic because rebuilds take 10-30x longer than repairs. Trials without a
+    ``map_name`` are grouped together as "all maps".
+    """
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    fig, ax = plt.subplots(figsize=(9, 5))
-    # Accept common names for repair and full-rebuild timing fields.
+    groups: dict[str, dict[str, list[float]]] = {}
+    for trial in trials:
+        try:
+            repair, rebuild = float(trial["repair_s"]), float(trial["rebuild_s"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (np.isfinite(repair) and np.isfinite(rebuild)):
+            continue
+        g = groups.setdefault(str(trial.get("map_name", "all maps")), {"repair": [], "rebuild": []})
+        g["repair"].append(repair)
+        g["rebuild"].append(rebuild)
 
-    repair_keys = (
-        "repair_s", "repair_time_s", "local_repair_s",
-        "repair_time", "repair_runtime_s",
-    )
-    rebuild_keys = (
-        "rebuild_s", "rebuild_time_s", "full_rebuild_s",
-        "rebuild_time", "rebuild_runtime_s",
-    )
+    fig, ax = plt.subplots(figsize=(max(6, 1.8 * len(groups) + 2), 5))
+    if not groups:
+        ax.text(0.5, 0.5, "No repair/rebuild timings", ha="center", va="center",
+                transform=ax.transAxes)
+        ax.set_axis_off()
+    else:
+        names = list(groups)
+        x = np.arange(len(names))
+        width = 0.38
+        rng = np.random.default_rng(0)                      # fixed jitter for the dots
+        for offset, key, label, colour in ((-width / 2, "repair", "Local repair", "tab:blue"),
+                                           (width / 2, "rebuild", "Full rebuild", "tab:orange")):
+            medians = [np.median(groups[n][key]) for n in names]
+            ax.bar(x + offset, medians, width, label=label, color=colour, alpha=0.75)
+            for i, n in enumerate(names):
+                vals = groups[n][key]
+                ax.scatter(x[i] + offset + rng.uniform(-width / 4, width / 4, len(vals)), vals,
+                           s=10, color="black", alpha=0.5, zorder=3)
+        for i, n in enumerate(names):                       # speed-up above each pair
+            speedup = np.median(groups[n]["rebuild"]) / np.median(groups[n]["repair"])
+            top = max(max(groups[n]["rebuild"]), max(groups[n]["repair"]))
+            ax.text(x[i], top * 1.35, f"{speedup:.0f}x faster", ha="center", fontsize=9)
+        ax.set_yscale("log")
+        ax.set_xticks(x)
+        ax.set_xticklabels(names, rotation=15)
+        ax.set_ylabel("Time per change (seconds, log scale)")
+        ax.set_title("Blocking one doorway: local repair vs full rebuild")
+        ax.set_ylim(top=ax.get_ylim()[1] * 2)
+        ax.grid(True, axis="y", which="both", alpha=0.3)
+        ax.legend(loc="upper left")
 
-    def get_timing(trial: dict, keys: tuple[str, ...]):
-        for key in keys:
-            value = trial.get(key)
-
-            if value is not None:
-                try:
-                    number = float(value)
-                    if np.isfinite(number) and number >= 0:
-                        return number
-                except (TypeError, ValueError):
-                    continue
-
-        return None
+    fig.tight_layout()
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return out
 
     trial_numbers = []
     repair_times = []

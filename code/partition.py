@@ -141,9 +141,27 @@ def _merge_small_areas(labels: np.ndarray, num: int, min_size: int) -> np.ndarra
     return out
 
 
+def _split_large_areas(blocked: np.ndarray, labels: np.ndarray, max_area_size: int) -> np.ndarray:
+    """Cut every area bigger than ``max_area_size`` cells along a square grid."""
+    sizes = np.bincount(labels[labels >= 0])
+    big = sizes > max_area_size
+    if not big.any():
+        return labels
+    h, w = blocked.shape
+    side = int(np.ceil(np.sqrt(max_area_size)))
+    across = (w + side - 1) // side
+    n_blocks = ((h + side - 1) // side) * across
+    r, c = np.indices((h, w))
+    block = (r // side) * across + c // side
+    out = labels.astype(np.int64) * n_blocks            # keeps different areas apart
+    split = (labels >= 0) & big[np.maximum(labels, 0)]
+    out[split] += block[split]
+    out[labels < 0] = -1
+    return validate(blocked, out)
+
 
 def watershed(blocked: np.ndarray, min_seed_distance: int = 2,
-              min_area_size: int = 4) -> np.ndarray:
+              min_area_size: int = 4, max_area_size: int | None = 512) -> np.ndarray:
     blocked = np.asarray(blocked).astype(bool)
     open_cells = ~blocked
     if not open_cells.any():
@@ -179,7 +197,10 @@ def watershed(blocked: np.ndarray, min_seed_distance: int = 2,
         labels = _merge_small_areas(labels, num, min_area_size)
 
    
-    return validate(blocked, labels)
+    labels = validate(blocked, labels)
+    if max_area_size:
+        labels = _split_large_areas(blocked, labels, max_area_size)
+    return labels
 
 
 def louvain(blocked: np.ndarray, coarsen: int = 4, resolution: float = 1.0,

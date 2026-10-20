@@ -146,6 +146,7 @@ class DoorwayGraph:
         return list(reversed(self.paths[(v, u)]))
 
     def insert(self, cell: Cell) -> int:
+        self.last_insert_expanded = 0
         area_id = int(self.labels[cell])
         if area_id < 0:
             raise ValueError("cell must be an open cell")
@@ -163,9 +164,13 @@ class DoorwayGraph:
         if not doorway_ids:
             return node_id
 
-        allowed_neighbours = self.grid.restricted_neighbours(
+        area_neighbours = self.grid.restricted_neighbours(
             self.labels, {area_id}
         )
+
+        def allowed_neighbours(c):             # dijkstra_all calls this once per expanded cell
+            self.last_insert_expanded += 1
+            return area_neighbours(c)
         targets = {self.nodes[doorway_id][1] for doorway_id in doorway_ids}
 
         distances, parent = dijkstra_all(
@@ -416,13 +421,16 @@ class HPAPlanner:
 
         route = []
         tier1_expanded = 0
+        insert_expanded = 0
         tier1_generated = 0
         hierarchical_path = None
         hierarchical_cost = float("inf")
 
         try:
             start_node = graph.insert(start)
+            insert_expanded = graph.last_insert_expanded
             goal_node = graph.insert(goal)
+            insert_expanded += graph.last_insert_expanded
 
             tier1_result = astar(
                 start_node,
@@ -478,7 +486,7 @@ class HPAPlanner:
 
         expanded = (
             candidate.expanded if candidate is not None else 0
-        ) + tier1_expanded
+        ) + tier1_expanded + insert_expanded
         generated = (
             candidate.generated if candidate is not None else 0
         ) + tier1_generated

@@ -10,8 +10,8 @@ import pygame
 
 import experiments
 from grid import Cell, Grid, SearchResult
-from mapio import read_map, write_map      # <- change to the module that holds read_map / write_map
-from planners import FlatPlanner           # <- change to the module that holds FlatPlanner
+from map_io import read_map, write_map
+from partition import distance_map
 
 STAGES: list[str] = ["map", "distance", "areas", "graph", "route", "path", "compare"]
 PANEL = 340
@@ -21,7 +21,15 @@ HIER_PATH, FLAT_PATH, WALL, OPEN = (214, 40, 160), (0, 200, 220), (34, 36, 44), 
 
 
 def area_color(area: int) -> tuple[int, int, int]:
-    
+    """A fixed colour for an area id, so an area keeps its colour between frames.
+
+    Args:
+        area (int): Area id, >= 0.
+
+    Returns:
+        tuple[int, int, int]: An ``(R, G, B)`` colour, each 0-255. Different ids give
+        visibly different colours.
+    """
     if area < 0:
         return (90, 90, 96)
     # golden-ratio hue steps spread consecutive ids around the colour wheel
@@ -31,7 +39,7 @@ def area_color(area: int) -> tuple[int, int, int]:
 
 
 def _base(walls: np.ndarray, labels: np.ndarray | None = None) -> np.ndarray:
-    
+    """One RGB pixel per cell: walls dark, open cells light or coloured by area."""
     img = np.where(walls[..., None], WALL, OPEN).astype(np.uint8)
     if labels is not None:
         ok = (labels >= 0) & ~walls
@@ -41,7 +49,7 @@ def _base(walls: np.ndarray, labels: np.ndarray | None = None) -> np.ndarray:
 
 
 def _scale(img: np.ndarray, px: int) -> pygame.Surface:
-    
+    """Turn a ``(rows, cols, 3)`` image into a surface with ``px`` pixels per cell."""
     surf = pygame.surfarray.make_surface(np.ascontiguousarray(img.swapaxes(0, 1)))
     return pygame.transform.scale(surf, (img.shape[1] * px, img.shape[0] * px))
 
@@ -49,7 +57,15 @@ def _scale(img: np.ndarray, px: int) -> pygame.Surface:
 class App:
 
     def __init__(self, method: str = "HPA-watershed", window_size: tuple[int, int] = (1280, 800)) -> None:
+        """Open the window.
 
+        Args:
+            method (str): Which hierarchical method to show.
+            window_size (tuple[int, int]): ``(width, height)`` of the window in pixels.
+
+        Returns:
+            None.
+        """
         pygame.init()
         pygame.display.set_caption(f"Hierarchical path planning - {method}")
         self.screen = pygame.display.set_mode(window_size, pygame.RESIZABLE)
@@ -62,22 +78,21 @@ class App:
         self.stage, self.editing, self.brush, self.cell_px = 0, False, 1, 1
         self.walls, self.stats, self.prep = np.zeros((1, 1), bool), {}, 0.0
         self.dirty, self.msg, self.ox, self.oy = False, "Left click: start, right click: goal", 0, 0
-        self._surf, self._cen, self._adj, self._route = None, {}, [], []
-
+        self._surf, self._nodes, self._edges, self._cen, self._route = None, [], [], {}, []
 
     # helpers
+    
     def _fit(self) -> None:
-        
+        """Pick ``cell_px`` and the map origin so the map fits left of the panel."""
         w, h = self.screen.get_size()
         rows, cols = self.walls.shape
         self.cell_px = max(1, min((w - PANEL) // cols, h // rows))
         self.ox, self.oy = (w - PANEL - cols * self.cell_px) // 2, (h - rows * self.cell_px) // 2
         self._surf = None
 
-    
     def _use(self, grid: Grid, reset: bool = True) -> None:
-        
-        planner, baseline = experiments.METHODS[self.method](), FlatPlanner()
+        """Preprocess both planners on ``grid`` (the old map stays if this raises)."""
+        planner, baseline = experiments.make_planner(self.method), experiments.make_planner("A*")
         self.prep = float(planner.preprocess(grid) or 0)
         baseline.preprocess(grid)
         lab = getattr(planner, "labels", None)
@@ -85,62 +100,64 @@ class App:
         self.walls, self.dirty, self.stats = grid.blocked.copy(), False, planner.stats()
         self.labels = None if lab is None else np.asarray(lab).astype(int)
         if reset:
-            self.start = self.goal = None
-            self.stage = 0
-            self.run_query()
+            self.start = self.goal = self.result = self.baseline_result = None
+            self.explored, self.baseline_explored, self.stage = [], [], 0
         self._fit()
 
-    
     def _rebuild(self) -> None:
-        
+        """Apply pending wall edits: new grid, new preprocessing, query re-run."""
         if not self.dirty:
             return
         walls, start, goal = self.walls.copy(), self.start, self.goal
         self._use(Grid(walls, self.diagonal), reset=False)
         self.start, self.goal = (None if c and walls[c] else c for c in (start, goal))
+        if None in (self.start, self.goal):
+            self.result = self.baseline_result = None
+            self.explored, self.baseline_explored = [], []
         self.run_query()
         self.msg = "Map edited; planners re-preprocessed"
 
-
     # map and queries
+    
     def load_map(self, path: str | Path) -> None:
+        """Load a ``.map`` file and prepare both planners on it.
 
+        Args:
+            path (str | Path): The map file.
+
+        Returns:
+            None. ``grid``, ``planner`` and ``baseline`` are set; ``start``, ``goal``
+            and results are cleared; ``stage`` returns to 0.
+        """
         self._use(read_map(path, self.diagonal))
         self.msg = f"Loaded {Path(path).name}"
 
     def generate_map(self, kind: str, size: int, seed: int) -> None:
+        """Create a new generated map and prepare both planners on it.
 
-        rng, n = np.random.default_rng(seed), size
-        w = np.zeros((n, n), bool)
-        if kind == "random":
-            w = rng.random((n, n)) < .28
-        elif kind == "rooms":
-            s = max(8, n // 6)
-            w[::s] = w[:, ::s] = True
-            for r in range(0, n, s):                       # one door per wall segment
-                for c in range(0, n, s):
-                    w[r, min(n - 1, c + rng.integers(1, s))] = w[min(n - 1, r + rng.integers(1, s)), c] = False
-            w[[0, -1]] = w[:, [0, -1]] = True
-        elif kind == "maze":                               # depth-first carving on odd cells
-            w[:], m, stack = True, n - (n % 2 == 0), [(1, 1)]
-            w[1, 1] = False
-            while stack:
-                r, c = stack[-1]
-                nb = [(r + a, c + b) for a, b in ((2, 0), (-2, 0), (0, 2), (0, -2))
-                      if 0 < r + a < m - 1 and 0 < c + b < m - 1 and w[r + a, c + b]]
-                if not nb:
-                    stack.pop()
-                    continue
-                y, x = nb[rng.integers(len(nb))]
-                w[(r + y) // 2, (c + x) // 2] = w[y, x] = False
-                stack.append((y, x))
-        else:
-            raise ValueError(f"unknown map kind {kind!r}; use random, rooms or maze")
-        self._use(Grid(w, self.diagonal))
-        self.msg = f"Generated {kind} {n}x{n} (seed {seed})"
+        Args:
+            kind (str): ``"random"``, ``"rooms"`` or ``"maze"``.
+            size (int): Side length in cells.
+            seed (int): Random seed.
+
+        Returns:
+            None. Same effects as ``load_map``.
+        """
+        grid = experiments.make_map(kind, size, seed)
+        grid.diagonal = self.diagonal
+        self._use(grid)
+        self.msg = f"Generated {kind} {size}x{size} (seed {seed})"
 
     def set_start(self, cell: Cell) -> bool:
+        """Choose the start cell.
 
+        Args:
+            cell (Cell): The clicked cell.
+
+        Returns:
+            bool: ``True`` if the cell is open and was set (the query is re-run if a
+            goal exists); ``False`` if it is a wall (nothing changes).
+        """
         if self.grid is None or not self.grid.is_free(cell):
             return False
         self.start = cell
@@ -148,7 +165,15 @@ class App:
         return True
 
     def set_goal(self, cell: Cell) -> bool:
+        """Choose the goal cell.
 
+        Args:
+            cell (Cell): The clicked cell.
+
+        Returns:
+            bool: ``True`` if set (the query is re-run if a start exists); ``False`` if
+            the cell is a wall.
+        """
         if self.grid is None or not self.grid.is_free(cell):
             return False
         self.goal = cell
@@ -156,11 +181,19 @@ class App:
         return True
 
     def run_query(self) -> None:
+        """Run the current start/goal on both planners, recording explored cells.
 
-        self.result = self.baseline_result = None
-        self.explored, self.baseline_explored, self._surf = [], [], None
+        Passes an ``on_expand`` function to each ``query`` call that appends the cell
+        to ``explored`` / ``baseline_explored``.
+
+        Returns:
+            None. Sets ``result``, ``baseline_result``, ``explored``,
+            ``baseline_explored``. Does nothing if start or goal is missing.
+        """
         if self.start is None or self.goal is None:
             return
+        self.result = self.baseline_result = None
+        self.explored, self.baseline_explored, self._surf = [], [], None
         try:
             self.result = self.planner.query(self.start, self.goal, on_expand=self.explored.append)
             self.baseline_result = self.baseline.query(self.start, self.goal,
@@ -171,25 +204,71 @@ class App:
             self.msg = f"Query failed: {err}"
 
     def next_stage(self) -> None:
+        """Show the next stage (wraps around)."""
         self.stage, self._surf = (self.stage + 1) % len(STAGES), None
 
     def prev_stage(self) -> None:
+        """Show the previous stage (wraps around)."""
         self.stage, self._surf = (self.stage - 1) % len(STAGES), None
 
     # editing
+    
     def toggle_block(self, cell: Cell) -> None:
+        """Block an open cell or open a wall cell, live (the door-blocking demo).
 
+        Calls ``planner.update`` and ``baseline.update`` with the change, then re-runs
+        the query so the new path appears.
+
+        Args:
+            cell (Cell): The cell under the mouse; border cells are ignored.
+
+        Returns:
+            None.
+        """
+        rows, cols = self.walls.shape
+        if not (0 < cell[0] < rows - 1 and 0 < cell[1] < cols - 1):
+            return                                         # border cells are ignored
         self.walls[cell] ^= True
         self.dirty, self._surf = True, None
-        if not self.editing:
-            self._rebuild()
+        if self.editing:
+            return                                         # editor edits are applied when it closes
+        blocked = bool(self.walls[cell])
+        try:                                               # live: incremental update, no re-preprocessing
+            secs = float(self.planner.update(cell, blocked) or 0)
+            self.baseline.update(cell, blocked)
+        except (NotImplementedError, AttributeError):      # no update(): rebuild everything
+            return self._rebuild()
+        lab = getattr(self.planner, "labels", None)
+        self.labels = None if lab is None else np.asarray(lab).astype(int)
+        self.stats, self.dirty = self.planner.stats(), False
+        self.start, self.goal = (None if c and self.walls[c] else c for c in (self.start, self.goal))
+        if None in (self.start, self.goal):
+            self.result = self.baseline_result = None
+            self.explored, self.baseline_explored = [], []
+        self.run_query()
+        self.msg = f"{cell} {'blocked' if blocked else 'opened'}; updated in {secs * 1e3:.2f} ms"
 
     def cell_at(self, x: int, y: int) -> Cell | None:
+        """Translate a mouse position into a cell.
 
+        Args:
+            x (int): Pixel column in the window.
+            y (int): Pixel row in the window.
+
+        Returns:
+            Cell | None: The ``(row, col)`` under that pixel, or ``None`` if the pixel
+            is outside the map picture.
+        """
         r, c = (y - self.oy) // self.cell_px, (x - self.ox) // self.cell_px
         return (int(r), int(c)) if 0 <= r < self.walls.shape[0] and 0 <= c < self.walls.shape[1] else None
 
     def toggle_editor(self) -> None:
+        """Switch editor mode on or off.
+
+        Returns:
+            None. Flips ``editing``. When switching OFF, both planners are prepared
+            again on the edited map and start/goal are kept if still open.
+        """
         self.editing, self._surf = not self.editing, None
         if self.editing:
             self.msg = "EDITOR: left drag = wall, right drag = erase, [ ] = brush"
@@ -197,20 +276,51 @@ class App:
             self._rebuild()
 
     def paint(self, cell: Cell, wall: bool) -> None:
+        """Paint a square of walls or open space (editor mode only).
 
+        Args:
+            cell (Cell): Centre of the brush.
+            wall (bool): ``True`` = paint walls, ``False`` = erase to open space.
+
+        Returns:
+            None. A ``brush`` x ``brush`` square centred on ``cell`` is changed; the
+            outer border of the map always stays wall.
+        """
+        if not self.editing:
+            return
         r, c, h, b = *cell, self.brush // 2, self.brush
-        self.walls[max(0, r - h):max(0, r - h + b), max(0, c - h):max(0, c - h + b)] = wall
+        w = self.walls
+        w[max(0, r - h):max(0, r - h + b), max(0, c - h):max(0, c - h + b)] = wall
+        w[[0, -1]] = w[:, [0, -1]] = True                  # the outer border always stays wall
         self.dirty, self._surf = True, None
 
     def save_map(self, path: str | Path) -> None:
+        """Save the current map as a ``.map`` file.
 
+        Args:
+            path (str | Path): Where to write, e.g. ``"maps/generated/my_map.map"``.
+
+        Returns:
+            None.
+        """
         self._rebuild()
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
         write_map(self.grid, path)
         self.msg = f"Saved {path}"
 
     # drawing and loop
+    
     def draw(self) -> None:
+        """Draw the current stage and the statistics panel.
 
+        What is drawn depends on ``STAGES[stage]`` (see ``STAGES``). The panel shows,
+        for each planner: path cost, nodes expanded, query time, and for the
+        hierarchical method the number of areas/doorways and how much longer its path
+        is than the optimal one.
+
+        Returns:
+            None.
+        """
         scr, px, w, lab = self.screen, self.cell_px, self.walls, self.labels
         st = "map" if self.editing else STAGES[self.stage]
         W, H = scr.get_size()
@@ -228,37 +338,37 @@ class App:
                     img[rc[:, 0], rc[:, 1]] = img[rc[:, 0], rc[:, 1]] * (1 - a) + np.array(col) * a
 
             if st == "distance" and (~w).any():            # distance to the nearest wall
-                d = np.where(w, 0, w.size)
-                while True:
-                    p = np.pad(d, 1, constant_values=w.size)
-                    n = np.minimum(d, np.minimum.reduce([p[:-2, 1:-1], p[2:, 1:-1], p[1:-1, :-2], p[1:-1, 2:]]) + 1)
-                    if (n == d).all():
-                        break
-                    d = n
-                t = (d / max(d[~w].max(), 1))[..., None]
+                d = distance_map(w)
+                t = (d / max(d.max(), 1))[..., None]
                 img[~w] = (t * (253, 231, 37) + (1 - t) * (68, 1, 84))[~w]
             if st in ("path", "compare"):
                 tint(self.baseline_explored if st == "compare" else [], FLAT, .45)
                 tint(self.explored, HIER, .5)
-            self._cen, self._adj, self._route = {}, [], []
-            if lab is not None and st in ("graph", "route"):
-                self._cen = {int(a): np.argwhere(lab == a).mean(0) for a in np.unique(lab[lab >= 0])}
-                p = np.concatenate([np.c_[lab[:, :-1].ravel(), lab[:, 1:].ravel()],
-                                    np.c_[lab[:-1].ravel(), lab[1:].ravel()]])
-                p = p[(p[:, 0] != p[:, 1]) & (p.min(1) >= 0)]
-                self._adj = np.unique(np.sort(p, 1), axis=0).tolist()
+            pl = self.planner
+            self._nodes, self._edges, self._cen, self._route = [], [], {}, []
+            if lab is not None and st == "graph":
+                if hasattr(pl, "area_graph"):              # two-tier: areas joined by crossings
+                    cen = pl.area_graph.centroids
+                    self._nodes, self._edges = list(cen.values()), [(cen[a], cen[b]) for a, b in pl.area_graph.edges]
+                else:                                      # HPA: doorway nodes joined by edges
+                    pos = {i: n[1] for i, n in pl.graph.nodes.items()}
+                    self._nodes = list(pos.values())
+                    self._edges = [(pos[u], pos[v]) for u, nb in pl.graph.adj.items() for v in nb if u < v]
             if lab is not None and st == "route" and path(self.result):
                 ids = [int(lab[c]) for c in path(self.result)]
                 self._route = [a for i, a in enumerate(ids) if i == 0 or a != ids[i - 1]]
+                if hasattr(pl, "area_graph"):              # two-tier planners report their real area route
+                    self._route = list(self.result.extra.get("route") or self._route)
+                self._cen = {a: np.argwhere(lab == a).mean(0) for a in self._route}
                 dim = ~np.isin(lab, self._route) & ~w
                 img[dim] = img[dim] * .3 + 190 * .7
             self._surf = _scale(img, px)
         scr.blit(self._surf, (self.ox, self.oy))
 
-        for a, b in self._adj:
-            line([self._cen[a], self._cen[b]], (60, 60, 70), 2)
-        for c in self._cen.values():
-            pygame.draw.circle(scr, (20, 20, 24), pt(c), max(4, px + 1))
+        for p, q in self._edges:
+            line([p, q], (60, 60, 70), 2)
+        for p in self._nodes:
+            pygame.draw.circle(scr, (20, 20, 24), pt(p), max(2, px // 2 + 1))
         line([self._cen[a] for a in self._route], (20, 20, 24), max(3, px))
         if st in ("route", "path", "compare"):
             line(path(self.baseline_result) if st == "compare" else [], FLAT_PATH, max(3, px // 2 + 1))
@@ -277,7 +387,7 @@ class App:
         rows = lambda r: ([f"  cost     {r.cost:.2f}", f"  expanded {r.expanded}",
                            f"  time     {r.runtime_s * 1e3:.2f} ms"] if r.success else ["  no path"]) if r else ["  -"]
         s = self.stats
-        out = [(self.method, HIER), (f"Stage {self.stage + 1}/{len(STAGES)}: {st}", TXT), ("", TXT),
+        out = [(self.method, HIER), ("EDITOR - press E to apply" if self.editing else f"Stage {self.stage + 1}/{len(STAGES)}: {st}", TXT), ("", TXT),
                ("Hierarchical", HIER), *((t, TXT) for t in rows(h)),
                (f"  areas {s.get('areas', '?')}  doorways {s.get('doorways', '?')}", TXT),
                (f"  preprocess {self.prep:.3f} s", TXT), ("", TXT),
@@ -297,7 +407,14 @@ class App:
         pygame.display.flip()
 
     def handle_event(self, event) -> bool:
+        """React to one mouse or keyboard event.
 
+        Args:
+            event: A ``pygame.event.Event``.
+
+        Returns:
+            bool: ``False`` if the window should close (quit event or ESC), else ``True``.
+        """
         t = event.type
         free = lambda s: next(p for i in range(999) if not (p := Path(f"{s[0]}{i or ''}{s[1]}")).exists())
         if t == pygame.QUIT:
@@ -320,7 +437,7 @@ class App:
             elif k == pygame.K_RIGHTBRACKET:
                 self.brush = min(32, self.brush + 1)
             elif k == pygame.K_s and self.grid:
-                self.save_map(free(("map_edited", ".map")))
+                self.save_map(free(("maps/generated/map_edited", ".map")))
             elif k == pygame.K_f and self.grid:
                 out = save_figure(self.grid, self.labels, self.result.path if self.result and self.result.success else None,
                                   free((f"figure_{STAGES[self.stage]}", ".png")), self.result)
@@ -344,7 +461,11 @@ class App:
         return True
 
     def run(self) -> None:
+        """Main loop: handle events, draw, repeat about 60 times a second until closed.
 
+        Returns:
+            None.
+        """
         while all([self.handle_event(e) for e in pygame.event.get()]):
             self.draw()
             self.clock.tick(60)
@@ -352,24 +473,52 @@ class App:
 
 def save_figure(grid: Grid, labels: np.ndarray | None, path_cells: list[Cell] | None,
                 out: str | Path, result: SearchResult | None = None) -> Path:
+    """Save a still picture of a map for the report (matplotlib; no window needed).
+
+    Args:
+        grid (Grid): The map.
+        labels (np.ndarray | None): If given, areas are coloured.
+        path_cells (list[Cell] | None): If given, drawn as a line.
+        out (str | Path): PNG file to write.
+        result (SearchResult | None): If given, its cost and expansions go in the title.
+
+    Returns:
+        Path: ``out``.
+    """
+    import matplotlib
+    matplotlib.use("Agg")                                  # file output only: no window
+    import matplotlib.pyplot as plt
 
     out = Path(out) if Path(out).suffix else Path(out).with_suffix(".png")
     out.parent.mkdir(parents=True, exist_ok=True)
     walls = np.array(grid.blocked, bool)
-    px = max(1, min(1600 // walls.shape[1], 1200 // walls.shape[0]))
-    surf = _scale(_base(walls, None if labels is None else np.asarray(labels).astype(int)), px)
+    img = _base(walls, None if labels is None else np.asarray(labels).astype(int))
     cells = path_cells or (result.path if result and result.success else None) or []
-    pt = lambda c: ((c[1] + .5) * px, (c[0] + .5) * px)
+    fig, ax = plt.subplots(figsize=(8, 8 * walls.shape[0] / walls.shape[1] + .4))
+    ax.imshow(img, interpolation="nearest")
     if len(cells) > 1:
-        pygame.draw.lines(surf, HIER_PATH, False, [pt(c) for c in cells], max(2, px // 3))
+        ax.plot([c[1] for c in cells], [c[0] for c in cells], color=np.array(HIER_PATH) / 255, lw=2)
         for c, col in ((cells[0], START), (cells[-1], GOAL)):
-            pygame.draw.circle(surf, col, pt(c), max(3, px))
-    pygame.image.save(surf, str(out))
+            ax.scatter(c[1], c[0], s=60, color=np.array(col) / 255, edgecolors="black", zorder=3)
+    if result is not None:
+        ax.set_title(f"cost {result.cost:.2f}, expanded {result.expanded}" if result.success else "no path")
+    ax.axis("off")
+    fig.savefig(out, dpi=150, bbox_inches="tight")
+    plt.close(fig)
     return out
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Command-line start of the demo.
 
+    Args:
+        argv (list[str] | None): Arguments; ``None`` = use the real command line.
+            ``--map PATH`` loads a file; or ``--generate KIND --size N --seed S``;
+            ``--method LABEL`` picks the hierarchical method.
+
+    Returns:
+        int: Exit code, 0 on a normal close.
+    """
     ap = argparse.ArgumentParser(description="Hierarchical path planning demo")
     ap.add_argument("--map", help=".map file to load")
     ap.add_argument("--generate", choices=("random", "rooms", "maze"), help="generate a map instead")
@@ -395,6 +544,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         pygame.quit()
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

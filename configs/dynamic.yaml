@@ -1,0 +1,11 @@
+name: dynamic
+type: dynamic
+output: results/dynamic.csv
+changes: 20
+seed: 0
+partitions: {rooms: watershed, street: fixed}
+maps:
+  - {kind: rooms, sizes: [256, 512], seeds: [2]}
+  - kind: file
+    label: street
+    paths: ["maps/benchmark/street/Berlin_0_256.map", "maps/benchmark/street/Berlin_0_512.map"]

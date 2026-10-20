@@ -4,21 +4,110 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-def load_results(paths: list[str | Path]) -> pd.DataFrame:
-    raise NotImplementedError
+CSV_COLUMNS: list[str] = [
+    "experiment", "method", "map_name", "map_kind", "map_size", "map_seed",
+    "query_id", "success", "cost", "optimal_cost", "suboptimality",
+    "expanded", "generated", "tier1_expanded", "runtime_s",
+    "preprocess_s", "areas", "doorways",
+]
 
+
+def load_results(paths: list[str | Path]) -> pd.DataFrame:
+    dataframes = []
+    for path in paths:
+        path_obj = Path(path)
+        if not path_obj.exists():
+            raise FileNotFoundError(f"File not found: {path}")
+        
+        df = pd.read_csv(path_obj)
+        
+        missing = set(CSV_COLUMNS) - set(df.columns)
+        if missing:
+            raise ValueError(f"File {path} lacks expected columns: {missing}")
+            
+        dataframes.append(df)
+        
+    return pd.concat(dataframes, ignore_index=True)
 
 def confidence_interval(values, level: float = 0.95, n_boot: int = 10_000,
                         seed: int = 0) -> tuple[float, float]:
-    raise NotImplementedError
+    data = np.asarray(values)
+    data = data[~np.isnan(data)]
+    
+    if len(data) < 2:
+        return (np.nan, np.nan)
+        
+    res = stats.bootstrap(
+        (data,), np.mean, confidence_level=level, 
+        n_resamples=n_boot, random_state=seed, method='percentile'
+    )
+    return (res.confidence_interval.low, res.confidence_interval.high)
 
 
 def summarize(df: pd.DataFrame, metric: str, by: list[str] | None = None) -> pd.DataFrame:
-    raise NotImplementedError
+    if by is None:
+        by = ["method", "map_kind", "map_size"]
+        
+   
+    success_df = df[df["success"] == True]
+    failed_counts = df[df["success"] == False].groupby(by).size().rename("failed")
+    
+    
+    grouped = success_df.groupby(by)[metric]
+    summary = grouped.agg(
+        n='count',
+        mean='mean',
+        sd='std',
+        median='median'
+    )
+    
+    
+    ci_lows = []
+    ci_highs = []
+    for _, group_data in grouped:
+        low, high = confidence_interval(group_data)
+        ci_lows.append(low)
+        ci_highs.append(high)
+        
+    summary['ci_low'] = ci_lows
+    summary['ci_high'] = ci_highs
+    
+    
+    summary = summary.join(failed_counts, how='left')
+    summary['failed'] = summary['failed'].fillna(0).astype(int)
+    
+    return summary.reset_index()
 
 
 def compare(df: pd.DataFrame, method_a: str, method_b: str, metric: str) -> dict:
-    raise NotImplementedError
+    df_a = df[df["method"] == method_a][["map_name", "query_id", metric]]
+    df_b = df[df["method"] == method_b][["map_name", "query_id", metric]]
+    
+    merged = pd.merge(df_a, df_b, on=["map_name", "query_id"], suffixes=('_a', '_b')).dropna()
+    
+    if len(merged) == 0:
+        raise ValueError(f"Methods {method_a} and {method_b} share no queries.")
+        
+    vals_a = merged[f"{metric}_a"].values
+    vals_b = merged[f"{metric}_b"].values
+    diff = vals_a - vals_b
+    
+    
+    non_zero_diffs = diff[diff != 0]
+    if len(non_zero_diffs) == 0:
+        p_val = 1.0
+    else:
+        res = stats.wilcoxon(vals_a, vals_b)
+        p_val = res.pvalue
+        
+    return {
+        "n": len(merged),
+        "median_a": float(np.median(vals_a)),
+        "median_b": float(np.median(vals_b)),
+        "median_diff": float(np.median(diff)),
+        "p_value": float(p_val),
+        "a_lower_fraction": float(np.mean(vals_a < vals_b))
+    }
 
 
 def breakeven_queries(df: pd.DataFrame, method: str, baseline: str = "A*") -> pd.DataFrame:
@@ -108,15 +197,92 @@ def breakeven_queries(df: pd.DataFrame, method: str, baseline: str = "A*") -> pd
 
 def plot_scaling(df: pd.DataFrame, out: str | Path, metric: str = "expanded",
                  map_kind: str | None = None) -> Path:
-    raise NotImplementedError
+    if map_kind:
+        df = df[df["map_kind"] == map_kind]
+        
+    summary = summarize(df, metric, by=["method", "map_size"])
+    
+    plt.figure(figsize=(8, 6))
+    for method in summary["method"].unique():
+        method_data = summary[summary["method"] == method].sort_values("map_size")
+        
+        yerr_lower = method_data["mean"] - method_data["ci_low"]
+        yerr_upper = method_data["ci_high"] - method_data["mean"]
+        
+        plt.errorbar(
+            method_data["map_size"], method_data["mean"], 
+            yerr=[yerr_lower, yerr_upper], 
+            label=method, marker='o', capsize=4
+        )
+        
+    plt.yscale('log')
+    plt.xlabel("Map Size")
+    plt.ylabel(metric.capitalize())
+    plt.title(f"Scaling of {metric}{' (' + map_kind + ')' if map_kind else ''}")
+    plt.legend()
+    plt.grid(True, which="both", ls="--", alpha=0.5)
+    
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    return out
 
 
 def plot_path_quality(df: pd.DataFrame, out: str | Path) -> Path:
-    raise NotImplementedError
+    hierarchical_df = df[(df["suboptimality"] > 1.0) | (df["method"].str.contains("-"))]
+    
+    plt.figure(figsize=(10, 6))
+    
+    methods = hierarchical_df["method"].unique()
+    data = [hierarchical_df[hierarchical_df["method"] == m]["suboptimality"].dropna() for m in methods]
+    
+    plt.boxplot(data, labels=methods)
+    plt.axhline(1.0, color='red', linestyle='--', label='Optimal (1.0)')
+    plt.ylabel("Suboptimality (cost / optimal_cost)")
+    plt.title("Path Quality of Hierarchical Methods")
+    plt.xticks(rotation=45, ha="right")
+    
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    return out
 
 
 def plot_partitions(df: pd.DataFrame, out: str | Path, metric: str = "expanded") -> Path:
-    raise NotImplementedError
+    df_part = df[df["method"].str.contains("-")] 
+    summary = summarize(df_part, metric, by=["method", "map_kind"])
+    
+    kinds = summary["map_kind"].unique()
+    methods = summary["method"].unique()
+    
+    x = np.arange(len(kinds))
+    width = 0.8 / len(methods)
+    
+    plt.figure(figsize=(10, 6))
+    for i, method in enumerate(methods):
+        method_data = summary[summary["method"] == method]
+    
+        means = [method_data[method_data["map_kind"] == k]["mean"].values[0] if k in method_data["map_kind"].values else 0 for k in kinds]
+        
+        plt.bar(x + i*width - width*(len(methods)-1)/2, means, width, label=method)
+        
+    plt.xlabel("Map Kind")
+    plt.ylabel(metric.capitalize())
+    plt.title(f"Comparison of Partition Methods ({metric})")
+    plt.xticks(x, kinds)
+    plt.legend()
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    return out
 
 
 def plot_breakeven(df: pd.DataFrame, out: str | Path, method: str, baseline: str = "A*") -> Path:
@@ -280,4 +446,36 @@ def plot_repair(trials: list[dict], out: str | Path) -> Path:
 
 
 def make_all(results_dir: str | Path = "results", out_dir: str | Path = "results/figures") -> list[Path]:
-    raise NotImplementedError
+    res_path = Path(results_dir)
+    out_path = Path(out_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+    
+    csv_files = list(res_path.glob("*.csv"))
+    if not csv_files:
+        print(f"No CSVs found in {results_dir}")
+        return []
+        
+    df = load_results(csv_files)
+    
+    written_files = []
+    
+    
+    sum_df = summarize(df, metric="expanded")
+    sum_csv = out_path / "summary.csv"
+    sum_df.to_csv(sum_csv, index=False)
+    written_files.append(sum_csv)
+    
+    
+    for metric in ["expanded", "runtime_s"]:
+        plot_file = plot_scaling(df, out_path / f"scaling_{metric}.png", metric=metric)
+        written_files.append(plot_file)
+        
+   
+    pq_file = plot_path_quality(df, out_path / "path_quality.png")
+    written_files.append(pq_file)
+    
+   
+    part_file = plot_partitions(df, out_path / "partitions_expanded.png", metric="expanded")
+    written_files.append(part_file)
+    
+    return written_files

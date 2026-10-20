@@ -1,0 +1,73 @@
+Berlin_0_256 (258x258, 50 queries)
+  A*                   50/50 solved, worst suboptimality 1.000
+  Basic-fixed          50/50 solved, worst suboptimality 1.308
+  Basic-watershed      50/50 solved, worst suboptimality 1.244
+  Corridor-fixed       50/50 solved, worst suboptimality 1.244
+  Corridor-watershed   50/50 solved, worst suboptimality 1.177
+  HPA-fixed            50/50 solved, worst suboptimality 1.112
+  HPA-watershed        50/50 solved, worst suboptimality 1.193
+Berlin_0_512 (514x514, 50 queries)
+  A*                   50/50 solved, worst suboptimality 1.000
+  Basic-fixed          50/50 solved, worst suboptimality 1.389
+  Basic-watershed      50/50 solved, worst suboptimality 1.313
+  Corridor-fixed       50/50 solved, worst suboptimality 1.118
+  Corridor-watershed   50/50 solved, worst suboptimality 1.164
+  HPA-fixed            50/50 solved, worst suboptimality 1.163
+  HPA-watershed        50/50 solved, worst suboptimality 1.103
+Berlin_0_1024 (1026x1026, 50 queries)
+  A*                   50/50 solved, worst suboptimality 1.000
+  Basic-fixed          50/50 solved, worst suboptimality 1.374
+  Basic-watershed      50/50 solved, worst suboptimality 1.332
+  Corridor-fixed       50/50 solved, worst suboptimality 1.262
+  Corridor-watershed   50/50 solved, worst suboptimality 1.252
+  HPA-fixed            50/50 solved, worst suboptimality 1.101
+  HPA-watershed        50/50 solved, worst suboptimality 1.150
+Boston_0_256 (258x258, 50 queries)
+  A*                   50/50 solved, worst suboptimality 1.000
+  Basic-fixed          50/50 solved, worst suboptimality 1.289
+  Basic-watershed      50/50 solved, worst suboptimality 1.352
+  Corridor-fixed       50/50 solved, worst suboptimality 1.155
+  Corridor-watershed   50/50 solved, worst suboptimality 1.199
+  HPA-fixed            50/50 solved, worst suboptimality 1.160
+  HPA-watershed        50/50 solved, worst suboptimality 1.092
+Boston_0_512 (514x514, 50 queries)
+  A*                   50/50 solved, worst suboptimality 1.000
+  Basic-fixed          50/50 solved, worst suboptimality 1.262
+  Basic-watershed      50/50 solved, worst suboptimality 1.249
+  Corridor-fixed       50/50 solved, worst suboptimality 1.092
+  Corridor-watershed   50/50 solved, worst suboptimality 1.112
+  HPA-fixed            50/50 solved, worst suboptimality 1.085
+  HPA-watershed        50/50 solved, worst suboptimality 1.183
+Boston_0_1024 (1026x1026, 50 queries)
+  A*                   50/50 solved, worst suboptimality 1.000
+  Basic-fixed          50/50 solved, worst suboptimality 1.324
+  Basic-watershed      50/50 solved, worst suboptimality 1.299
+  Corridor-fixed       50/50 solved, worst suboptimality 1.205
+  Corridor-watershed   50/50 solved, worst suboptimality 1.244
+  HPA-fixed            50/50 solved, worst suboptimality 1.194
+  HPA-watershed        50/50 solved, worst suboptimality 1.268
+Paris_0_256 (258x258, 50 queries)
+  A*                   50/50 solved, worst suboptimality 1.000
+  Basic-fixed          50/50 solved, worst suboptimality 1.281
+  Basic-watershed      50/50 solved, worst suboptimality 1.533
+  Corridor-fixed       50/50 solved, worst suboptimality 1.167
+  Corridor-watershed   50/50 solved, worst suboptimality 1.533
+  HPA-fixed            50/50 solved, worst suboptimality 1.077
+  HPA-watershed        50/50 solved, worst suboptimality 1.186
+Paris_0_512 (514x514, 50 queries)
+  A*                   50/50 solved, worst suboptimality 1.000
+  Basic-fixed          50/50 solved, worst suboptimality 1.325
+  Basic-watershed      50/50 solved, worst suboptimality 1.474
+  Corridor-fixed       50/50 solved, worst suboptimality 1.222
+  Corridor-watershed   50/50 solved, worst suboptimality 1.337
+  HPA-fixed            50/50 solved, worst suboptimality 1.218
+  HPA-watershed        50/50 solved, worst suboptimality 1.333
+Paris_0_1024 (1026x1026, 50 queries)
+  A*                   50/50 solved, worst suboptimality 1.000
+  Basic-fixed          50/50 solved, worst suboptimality 1.414
+  Basic-watershed      50/50 solved, worst suboptimality 1.349
+  Corridor-fixed       50/50 solved, worst suboptimality 1.167
+  Corridor-watershed   50/50 solved, worst suboptimality 1.249
+  HPA-fixed            50/50 solved, worst suboptimality 1.047
+  HPA-watershed        50/50 solved, worst suboptimality 1.093
+Done in 337.0s. Results: results/street.csv

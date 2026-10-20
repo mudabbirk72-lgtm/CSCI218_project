@@ -402,9 +402,9 @@ class HPAPlanner:
         graph = self.graph
 
         candidate = None
-        if labels[start] == labels[goal]:
-            area_id = int(labels[start])
-            neighbours = grid.restricted_neighbours(labels, {area_id})
+        start_area, goal_area = int(labels[start]), int(labels[goal])
+        if start_area == goal_area or self._areas_touch(start_area, goal_area):
+            neighbours = grid.restricted_neighbours(labels, {start_area, goal_area})
 
             if self.heuristic == "manhattan":
                 heuristic_fn = lambda cell: manhattan(cell, goal)
@@ -504,6 +504,12 @@ class HPAPlanner:
             },
         )
 
+
+    def _areas_touch(self, a: int, b: int) -> bool:
+        """True if a doorway of area ``a`` is joined to a doorway of area ``b``."""
+        graph = self.graph
+        return any(graph.nodes[v][0] == b
+                   for u in graph.by_area.get(a, []) for v in graph.adj[u])
 
 
     def update(self, cell: Cell, blocked: bool) -> float:

@@ -1,9 +1,9 @@
 from __future__ import annotations
 from collections.abc import Callable, Iterator
-from .area_graph import Gap, find_crossings, find_gaps
-from .grid import Cell, Grid, SearchResult
-from .search import astar, dijkstra_all, manhattan, octile
-from .partition import get_partitioner
+from area_graph import Gap, find_crossings, find_gaps
+from grid import Cell, Grid, SearchResult
+from search import astar, dijkstra_all, manhattan, octile
+from partition import get_partitioner
 import numpy as np
 
 

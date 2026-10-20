@@ -8,6 +8,16 @@ from area_graph import AreaGraph
 from search import astar, octile, manhattan
 
 
+class _InArea:
+    """Goal test for A*: ``cell in _InArea(labels, a)`` is True for every cell of area a."""
+
+    def __init__(self, labels, area: int) -> None:
+        self.labels, self.area = labels, area
+
+    def __contains__(self, cell) -> bool:
+        return int(self.labels[cell]) == self.area
+
+
 class TwoTierPlanner:
 
     
@@ -72,11 +82,6 @@ class TwoTierPlanner:
         # Return the time taken to preprocess the grid.
         return self.preprocess_s
 
-
-
-        
-
-
     
     def find_route(self, start: Cell, goal: Cell) -> SearchResult:
         # Find a route between the start and goal areas using A*
@@ -132,11 +137,8 @@ class TwoTierPlanner:
 
         # Visit each area after the starting area in the route.
         for next_area in route[1:]:
-            # Get the coordinates of every cell in the next area.
-            area_cells = np.argwhere(self.labels == next_area)
-
-            # Return failure if the area has no cells.
-            if area_cells.size == 0:
+            # Return failure if the next area does not exist.
+            if next_area not in self.area_graph.bboxes:
                 return SearchResult(
                     path=None,
                     cost=float("inf"),
@@ -147,17 +149,12 @@ class TwoTierPlanner:
                     extra={"legs": legs},
                 )
 
-            # Make every cell in the next area a possible target.
-            goal_cells = {
-                (int(cell[0]), int(cell[1]))
-                for cell in area_cells
-            }
+            # Any cell whose label is next_area is a target. Checking the label is
+            # much faster than listing every cell of the area (which scans the map).
+            goal_cells = _InArea(self.labels, next_area)
 
-            # Find the bounding box of the target area.
-            min_row = int(area_cells[:, 0].min())
-            max_row = int(area_cells[:, 0].max())
-            min_col = int(area_cells[:, 1].min())
-            max_col = int(area_cells[:, 1].max())
+            # Bounding box of the target area, worked out once in preprocess.
+            min_row, min_col, max_row, max_col = self.area_graph.bboxes[next_area]
 
             # Estimate the distance from a cell to the target area's box.
             def heuristic(cell: Cell) -> float:

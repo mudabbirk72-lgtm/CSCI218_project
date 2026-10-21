@@ -112,7 +112,6 @@ def compare(df: pd.DataFrame, method_a: str, method_b: str, metric: str) -> dict
 
 
 def breakeven_queries(df: pd.DataFrame, method: str, baseline: str = "A*") -> pd.DataFrame:
-    """Calculate the number of queries needed to recover preprocessing cost."""
 
     required = {
         "method", "map_kind", "map_size",
@@ -253,41 +252,104 @@ def plot_path_quality(df: pd.DataFrame, out: str | Path) -> Path:
     return out
 
 
+METRIC_LABELS = {
+    "runtime_s": "Query time relative to A* (log scale)",
+    "expanded": "Cells expanded relative to A* (log scale)",
+    "suboptimality": "Path length: % longer than optimal",
+}
+
+
+def _group_values(df: pd.DataFrame, metric: str, baseline: str = "A*") -> pd.DataFrame:
+    ok = df[df["success"] == True]
+    means = ok.groupby(["method", "map_kind", "map_size"])[metric].mean().reset_index()
+    if metric == "suboptimality":
+        means["value"] = (means[metric] - 1.0) * 100.0
+    else:
+        base = means[means["method"] == baseline][["map_kind", "map_size", metric]]
+        means = means.merge(base, on=["map_kind", "map_size"], suffixes=("", "_base"))
+        means["value"] = means[metric] / means[f"{metric}_base"]
+    means["group"] = means["map_kind"] + " " + means["map_size"].astype(str)
+    return means[means["method"] != baseline]
+
+
 def plot_partitions(df: pd.DataFrame, out: str | Path, metric: str = "expanded") -> Path:
-    df_part = df[df["method"].str.contains("-")] 
-    summary = summarize(df_part, metric, by=["method", "map_kind"])
-    
-    kinds = summary["map_kind"].unique()
-    methods = summary["method"].unique()
-    
-    x = np.arange(len(kinds))
-    width = 0.8 / len(methods)
-    
-    plt.figure(figsize=(10, 6))
+    data = _group_values(df, metric)
+    groups = sorted(data["group"].unique(), key=lambda g: (g.split()[0], int(g.split()[1])))
+    methods = list(dict.fromkeys(data.sort_values("method")["method"]))
+    x = np.arange(len(groups))
+    width = 0.8 / max(len(methods), 1)
+
+    fig, ax = plt.subplots(figsize=(max(8, 1.6 * len(groups) + 3), 5.5))
     for i, method in enumerate(methods):
-        method_data = summary[summary["method"] == method]
-    
-        means = [method_data[method_data["map_kind"] == k]["mean"].values[0] if k in method_data["map_kind"].values else 0 for k in kinds]
-        
-        plt.bar(x + i*width - width*(len(methods)-1)/2, means, width, label=method)
-        
-    plt.xlabel("Map Kind")
-    plt.ylabel(metric.capitalize())
-    plt.title(f"Comparison of Partition Methods ({metric})")
-    plt.xticks(x, kinds)
-    plt.legend()
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
-    
+        rows = data[data["method"] == method].set_index("group")["value"]
+        values = [rows.get(g, np.nan) for g in groups]
+        ax.bar(x + (i - (len(methods) - 1) / 2) * width, values, width, label=method)
+    if metric == "suboptimality":
+        ax.set_ylim(bottom=0)
+    else:
+        ax.set_yscale("log")
+        ax.axhline(1.0, color="black", linestyle="--", linewidth=1, label="A* (= 1)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(groups)
+    ax.set_xlabel("Map kind and size")
+    ax.set_ylabel(METRIC_LABELS.get(metric, metric))
+    ax.set_title(f"Partition comparison: {METRIC_LABELS.get(metric, metric).split(' (')[0]}")
+    ax.grid(axis="y", which="both", linestyle="--", alpha=0.4)
+    ax.legend(fontsize="small", ncol=2)
+
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(out, dpi=300, bbox_inches='tight')
-    plt.close()
-    
+    fig.tight_layout()
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+    return out
+
+
+def plot_area_cap(df: pd.DataFrame, out: str | Path) -> Path:
+    caps = [("HPA-watershed-nocap", "no cap"), ("HPA-watershed-cap1024", "1024"),
+            ("HPA-watershed", "512"), ("HPA-watershed-cap256", "256")]
+    rooms = df[df["map_kind"] == "rooms"]
+    sizes = sorted(rooms["map_size"].unique())
+    time = _group_values(rooms, "runtime_s")
+    quality = _group_values(rooms, "suboptimality")
+    prep = (rooms[rooms["success"] == True].drop_duplicates(["map_name", "method"])
+            .groupby(["method", "map_size"])["preprocess_s"].mean())
+
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.8))
+    x = np.arange(len(caps))
+    width = 0.8 / max(len(sizes), 1)
+    panels = [
+        (axes[0], lambda m, s: time.set_index(["method", "map_size"])["value"].get((m, s), np.nan),
+         "Query time relative to A* (log)", True),
+        (axes[1], lambda m, s: quality.set_index(["method", "map_size"])["value"].get((m, s), np.nan),
+         "% longer than optimal", False),
+        (axes[2], lambda m, s: prep.get((m, s), np.nan), "Preparation time, s (log)", True),
+    ]
+    for ax, get, label, log in panels:
+        for j, size in enumerate(sizes):
+            ax.bar(x + (j - (len(sizes) - 1) / 2) * width, [get(m, size) for m, _ in caps],
+                   width, label=f"rooms {size}")
+        if log:
+            ax.set_yscale("log")
+        if ax is axes[0]:
+            ax.axhline(1.0, color="black", linestyle="--", linewidth=1, label="A* (= 1)")
+        ax.set_xticks(x)
+        ax.set_xticklabels([name for _, name in caps])
+        ax.set_xlabel("Watershed area-size cap (cells)")
+        ax.set_ylabel(label)
+        ax.grid(axis="y", which="both", linestyle="--", alpha=0.4)
+    axes[0].legend(fontsize="small")
+    fig.suptitle("HPA-watershed: effect of the area-size cap on room maps")
+
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fig.tight_layout()
+    fig.savefig(out, dpi=300, bbox_inches="tight")
+    plt.close(fig)
     return out
 
 
 def plot_breakeven(df: pd.DataFrame, out: str | Path, method: str, baseline: str = "A*") -> Path:
-    """Plot estimated cumulative time for a method and its baseline."""
 
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -356,12 +418,6 @@ def plot_breakeven(df: pd.DataFrame, out: str | Path, method: str, baseline: str
 
 
 def plot_repair(trials: list[dict], out: str | Path) -> Path:
-    """Figure: local repair time against full rebuild time, one pair of bars per map.
-
-    Bars show the median over the map's trials; dots show every trial. The y-axis is
-    logarithmic because rebuilds take 10-30x longer than repairs. Trials without a
-    ``map_name`` are grouped together as "all maps".
-    """
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
 
@@ -415,13 +471,6 @@ def plot_repair(trials: list[dict], out: str | Path) -> Path:
 
 
 def make_all(results_dir: str | Path = "results", out_dir: str | Path = "results/figures") -> list[Path]:
-    """Regenerate every figure and summary table of the report in one call.
-
-    Each experiment's CSV is loaded on its own: the scaling and partitions experiments
-    share some maps, so loading them together would count those queries twice, and
-    dynamic.csv has different columns. pilot.csv is a test run and is not used.
-    Missing files are skipped with a message.
-    """
     res = Path(results_dir)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -452,7 +501,7 @@ def make_all(results_dir: str | Path = "results", out_dir: str | Path = "results
                 written.append(plot_scaling(scaling, out / f"scaling_{kind}_{metric}.png",
                                             metric=metric, map_kind=kind))
         written.append(plot_path_quality(scaling, out / "path_quality_scaling.png"))
-        rooms = scaling[scaling["map_kind"] == "rooms"]
+        rooms = scaling[(scaling["map_kind"] == "rooms") & (scaling["map_size"] >= 512)]
         written.append(plot_breakeven(rooms, out / "breakeven_rooms_HPA-watershed.png",
                                       "HPA-watershed"))
 
@@ -462,10 +511,10 @@ def make_all(results_dir: str | Path = "results", out_dir: str | Path = "results
         caps = ["HPA-watershed-nocap", "HPA-watershed-cap1024", "HPA-watershed",
                 "HPA-watershed-cap256"]
         main = partitions[~partitions["method"].isin(caps[:2] + caps[3:])]
-        sweep = partitions[partitions["method"].isin(caps)]
+
         for metric in ("runtime_s", "suboptimality"):
             written.append(plot_partitions(main, out / f"partitions_{metric}.png", metric=metric))
-            written.append(plot_partitions(sweep, out / f"area_cap_{metric}.png", metric=metric))
+        written.append(plot_area_cap(partitions, out / "area_cap.png"))
 
     # street maps: the real-city case study
     street = load("street")

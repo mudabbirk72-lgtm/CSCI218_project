@@ -1,0 +1,30 @@
+| maps | method | speedup_vs_A* | expanded_vs_A* | mean_pct_longer | worst_pct_longer | preprocess_s | breakeven_queries |
+|---|---|---|---|---|---|---|---|
+| rooms 1024 | A* | 1.00 | 1.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| rooms 1024 | Basic-fixed | 43.53 | 0.03 | 7.40 | 26.56 | 0.75 | 1.71 |
+| rooms 1024 | Basic-watershed | 50.44 | 0.03 | 7.18 | 17.81 | 0.97 | 2.21 |
+| rooms 1024 | Corridor-fixed | 13.43 | 0.08 | 4.92 | 19.29 | 0.74 | 1.79 |
+| rooms 1024 | Corridor-watershed | 13.99 | 0.07 | 3.21 | 13.06 | 0.96 | 2.31 |
+| rooms 1024 | HPA-fixed | 16.16 | 0.06 | 1.63 | 7.52 | 20.36 | 48.43 |
+| rooms 1024 | HPA-watershed | 28.55 | 0.03 | 1.22 | 8.24 | 16.47 | 38.08 |
+| random 1024 | A* | 1.00 | 1.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| random 1024 | Basic-fixed | 20.65 | 0.05 | 13.69 | 25.02 | 0.71 | 3.44 |
+| random 1024 | Basic-watershed | 15.09 | 0.07 | 8.96 | 35.74 | 1.31 | 6.50 |
+| random 1024 | Corridor-fixed | 5.76 | 0.17 | 6.67 | 17.39 | 0.71 | 3.95 |
+| random 1024 | Corridor-watershed | 10.32 | 0.10 | 5.86 | 17.87 | 1.33 | 6.80 |
+| random 1024 | HPA-fixed | 2.41 | 0.11 | 2.65 | 3.89 | 50.54 | 398.84 |
+| random 1024 | HPA-watershed | 1.13 | 0.30 | 1.81 | 3.53 | 38.25 | 1548.88 |
+| maze 1024 | A* | 1.00 | 1.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| maze 1024 | Basic-fixed | 3.46 | 0.27 | 0.00 | 0.00 | 0.74 | 1.37 |
+| maze 1024 | Basic-watershed | 3.61 | 0.25 | 0.00 | 0.00 | 0.68 | 1.24 |
+| maze 1024 | Corridor-fixed | 3.79 | 0.28 | 0.00 | 0.00 | 0.65 | 1.17 |
+| maze 1024 | Corridor-watershed | 3.76 | 0.27 | 0.00 | 0.00 | 0.64 | 1.15 |
+| maze 1024 | HPA-fixed | 12.39 | 0.12 | 0.00 | 0.00 | 3.90 | 5.59 |
+| maze 1024 | HPA-watershed | 17.93 | 0.09 | 0.00 | 0.00 | 4.01 | 5.60 |
+| street 1024 | A* | 1.00 | 1.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| street 1024 | Basic-fixed | 56.06 | 0.03 | 16.70 | 41.42 | 0.70 | 1.32 |
+| street 1024 | Basic-watershed | 36.54 | 0.03 | 14.90 | 34.91 | 0.87 | 1.67 |
+| street 1024 | Corridor-fixed | 7.51 | 0.14 | 5.48 | 26.21 | 0.71 | 1.53 |
+| street 1024 | Corridor-watershed | 5.76 | 0.17 | 4.76 | 25.16 | 0.85 | 1.92 |
+| street 1024 | HPA-fixed | 51.80 | 0.03 | 2.31 | 19.40 | 16.00 | 30.47 |
+| street 1024 | HPA-watershed | 26.77 | 0.04 | 2.74 | 26.80 | 23.04 | 44.70 |

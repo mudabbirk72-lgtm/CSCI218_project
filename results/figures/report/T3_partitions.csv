@@ -1,0 +1,23 @@
+maps,method,areas,preprocess_s,speedup_vs_A*,mean_pct_longer,worst_pct_longer
+rooms 256,Basic-fixed,651.333,0.044,11.353,8.122,54.665
+rooms 256,Basic-louvain,83.0,0.292,3.123,8.516,72.36
+rooms 256,Basic-watershed,436.0,0.057,10.875,9.872,48.557
+rooms 256,Corridor-fixed,651.333,0.043,3.571,5.428,54.665
+rooms 256,Corridor-watershed,436.0,0.055,3.854,5.257,36.356
+rooms 256,HPA-fixed,651.333,1.205,11.336,2.88,29.451
+rooms 256,HPA-louvain,83.0,2.047,3.481,0.546,3.378
+rooms 256,HPA-watershed,436.0,0.955,13.34,1.802,19.323
+rooms 256,HPA-watershed-cap1024,354.667,1.342,9.912,1.4,21.404
+rooms 256,HPA-watershed-cap256,573.667,0.743,15.96,2.178,13.683
+rooms 256,HPA-watershed-nocap,281.0,29.377,0.227,0.0,0.0
+rooms 512,Basic-fixed,2756.0,0.186,24.406,7.866,21.366
+rooms 512,Basic-louvain,124.333,1.231,4.052,8.004,59.651
+rooms 512,Basic-watershed,1716.0,0.231,26.763,8.062,60.095
+rooms 512,Corridor-fixed,2756.0,0.2,7.241,5.23,18.755
+rooms 512,Corridor-watershed,1716.0,0.236,7.463,3.992,17.351
+rooms 512,HPA-fixed,2756.0,5.071,16.813,1.666,8.63
+rooms 512,HPA-louvain,124.333,13.399,5.515,0.36,1.604
+rooms 512,HPA-watershed,1716.0,4.117,23.92,1.428,7.615
+rooms 512,HPA-watershed-cap1024,1445.0,5.694,20.493,1.068,7.679
+rooms 512,HPA-watershed-cap256,2320.0,3.073,25.336,1.459,7.842
+rooms 512,HPA-watershed-nocap,1150.667,519.995,0.175,0.0,0.0

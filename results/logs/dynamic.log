@@ -1,5 +1,5 @@
-rooms_256_s2     watershed  median repair    52.2 ms   median rebuild    970.5 ms   ( 18.6x faster)   answers match 20/20
-rooms_512_s2     watershed  median repair   166.4 ms   median rebuild   4101.5 ms   ( 24.6x faster)   answers match 20/20
-Berlin_0_256     fixed      median repair    46.8 ms   median rebuild    968.1 ms   ( 20.7x faster)   answers match 20/20
-Berlin_0_512     fixed      median repair   194.6 ms   median rebuild   3942.0 ms   ( 20.3x faster)   answers match 20/20
-Done in 433.7s. Results: results/dynamic.csv
+rooms_256_s2     watershed  median repair    15.2 ms   median rebuild    981.2 ms   ( 64.5x faster)   answers match 20/20
+rooms_512_s2     watershed  median repair    11.9 ms   median rebuild   4096.4 ms   (345.2x faster)   answers match 20/20
+Berlin_0_256     fixed      median repair     7.4 ms   median rebuild    975.8 ms   (132.7x faster)   answers match 20/20
+Berlin_0_512     fixed      median repair    20.5 ms   median rebuild   4039.0 ms   (197.1x faster)   answers match 20/20
+Done in 418.7s. Results: results/dynamic.csv

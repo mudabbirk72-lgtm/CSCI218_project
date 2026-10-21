@@ -4,6 +4,7 @@ from area_graph import Gap, find_crossings, find_gaps
 from grid import Cell, Grid, SearchResult
 from search import astar, dijkstra_all, manhattan, octile
 from partition import get_partitioner
+from scipy.ndimage import find_objects
 import numpy as np
 
 
@@ -220,7 +221,7 @@ class DoorwayGraph:
         self.temporary.clear()
 
 
-    def rebuild_areas(self, areas: set[int]) -> int:
+    def rebuild_areas(self, areas: set[int], region: tuple[int, int, int, int] | None = None) -> int:
         areas = {int(area) for area in areas}
         if not areas:
             return 0
@@ -273,7 +274,19 @@ class DoorwayGraph:
                 path if u < v else list(reversed(path))
             )
 
-        crossings = find_crossings(self.grid.blocked, self.labels)
+        if region is None:
+            crossings = find_crossings(self.grid.blocked, self.labels)
+        else:
+            # Only look for crossings inside the region around the changed areas
+            # (every crossing of those areas lies inside it), then shift the cells
+            # back to whole-map coordinates.
+            r0, c0, r1, c1 = region
+            local = find_crossings(self.grid.blocked[r0:r1 + 1, c0:c1 + 1],
+                                   self.labels[r0:r1 + 1, c0:c1 + 1])
+            crossings = {
+                key: [((a[0] + r0, a[1] + c0), (b[0] + r0, b[1] + c0)) for a, b in pairs]
+                for key, pairs in local.items()
+            }
         gaps = find_gaps(crossings)
 
         for gap in gaps:
@@ -335,6 +348,14 @@ class DoorwayGraph:
         return paths_recomputed
 
 
+def _area_bboxes(labels: np.ndarray) -> dict[int, list[int]]:
+    """``{area: [min_row, min_col, max_row, max_col]}`` for every area."""
+    boxes = {}
+    for area, sl in enumerate(find_objects(np.where(labels >= 0, labels + 1, 0))):
+        if sl is not None:
+            boxes[area] = [sl[0].start, sl[1].start, sl[0].stop - 1, sl[1].stop - 1]
+    return boxes
+
 
 class HPAPlanner:
 
@@ -379,6 +400,7 @@ class HPAPlanner:
         self.grid = grid
         self.labels = labels
         self.graph = graph
+        self._bboxes = _area_bboxes(labels)
         self.preprocess_s = elapsed
 
         return elapsed
@@ -512,6 +534,16 @@ class HPAPlanner:
                    for u in graph.by_area.get(a, []) for v in graph.adj[u])
 
 
+    def _region(self, areas: set[int]) -> tuple[int, int, int, int]:
+        """The box around ``areas`` grown by one cell, clipped to the map."""
+        boxes = [self._bboxes[a] for a in areas if a in self._bboxes]
+        if not boxes:
+            return 0, 0, self.grid.height - 1, self.grid.width - 1
+        return (max(0, min(b[0] for b in boxes) - 1), max(0, min(b[1] for b in boxes) - 1),
+                min(self.grid.height - 1, max(b[2] for b in boxes) + 1),
+                min(self.grid.width - 1, max(b[3] for b in boxes) + 1))
+
+
     def update(self, cell: Cell, blocked: bool) -> float:
         """Block or open one cell and repair the affected areas locally."""
         from time import perf_counter
@@ -563,9 +595,10 @@ class HPAPlanner:
             labels[cell] = -1
 
             if old_area >= 0:
+                r0, c0, r1, c1 = self._bboxes[old_area]   # search only the area's box
                 remaining = {
-                    (int(r), int(c))
-                    for r, c in np.argwhere(labels == old_area)
+                    (int(r) + r0, int(c) + c0)
+                    for r, c in np.argwhere(labels[r0:r1 + 1, c0:c1 + 1] == old_area)
                 }
                 components = []
 
@@ -595,6 +628,9 @@ class HPAPlanner:
                 for component in components[1:]:
                     for piece_cell in component:
                         labels[piece_cell] = next_id
+                    rows = [rc[0] for rc in component]
+                    cols = [rc[1] for rc in component]
+                    self._bboxes[next_id] = [min(rows), min(cols), max(rows), max(cols)]                        
                     affected.add(next_id)
                     next_id += 1
 
@@ -623,6 +659,8 @@ class HPAPlanner:
                 chosen_area = int(labels.max()) + 1
 
             labels[cell] = chosen_area
+            box = self._bboxes.setdefault(chosen_area, [row, col, row, col])
+            box[:] = [min(box[0], row), min(box[1], col), max(box[2], row), max(box[3], col)]
             affected.add(chosen_area)
 
         for dr in (-1, 0, 1):
@@ -633,7 +671,7 @@ class HPAPlanner:
                     if area_id >= 0:
                         affected.add(area_id)
 
-        paths_recomputed = self.graph.rebuild_areas(affected)
+        paths_recomputed = self.graph.rebuild_areas(affected, self._region(affected))
         elapsed = perf_counter() - start_time
 
         self.last_update = {

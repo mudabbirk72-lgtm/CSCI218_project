@@ -14,6 +14,9 @@ from map_io import read_map, write_map
 from partition import distance_map
 
 STAGES: list[str] = ["map", "distance", "areas", "graph", "route", "path", "compare"]
+DEMO_METHODS: list[str] = ["HPA-watershed", "HPA-fixed", "Corridor-watershed", "Corridor-fixed",
+                           "Basic-watershed", "Basic-fixed"]
+"""Methods the M key cycles through, in order."""
 PANEL = 340
 BG, PANEL_BG, TXT, DIM = (22, 24, 30), (30, 33, 41), (222, 226, 234), (140, 146, 160)
 START, GOAL, HIER, FLAT = (46, 204, 113), (231, 76, 60), (255, 140, 0), (52, 152, 219)
@@ -129,7 +132,11 @@ class App:
             None. ``grid``, ``planner`` and ``baseline`` are set; ``start``, ``goal``
             and results are cleared; ``stage`` returns to 0.
         """
-        self._use(read_map(path, self.diagonal))
+        grid = read_map(path, self.diagonal)
+        b = grid.blocked
+        if not (b[0].all() and b[-1].all() and b[:, 0].all() and b[:, -1].all()):
+            grid = read_map(path, self.diagonal, pad_border=True)   # e.g. street maps
+        self._use(grid)
         self.msg = f"Loaded {Path(path).name}"
 
     def generate_map(self, kind: str, size: int, seed: int) -> None:
@@ -146,6 +153,7 @@ class App:
         grid = experiments.make_map(kind, size, seed)
         grid.diagonal = self.diagonal
         self._use(grid)
+        self.generated = (kind, size, seed)          # remembered for the G key
         self.msg = f"Generated {kind} {size}x{size} (seed {seed})"
 
     def set_start(self, cell: Cell) -> bool:
@@ -202,6 +210,15 @@ class App:
         except Exception as err:                           # a planner bug must not close the window
             self.result = self.baseline_result = None
             self.msg = f"Query failed: {err}"
+
+    def next_method(self) -> None:
+        """Switch to the next method in DEMO_METHODS on the same map, keeping start and goal."""
+        i = DEMO_METHODS.index(self.method) if self.method in DEMO_METHODS else -1
+        self.method = DEMO_METHODS[(i + 1) % len(DEMO_METHODS)]
+        self._use(self.grid, reset=False)
+        self._surf = None
+        self.run_query()
+        self.msg = f"Method: {self.method}"
 
     def next_stage(self) -> None:
         """Show the next stage (wraps around)."""
@@ -399,9 +416,9 @@ class App:
         for text, col in out:
             scr.blit(self.font.render(text, True, col), (W - PANEL + 14, y))
             y += 19
-        y = max(y + 10, H - 150)
-        for text in (self.msg[:36], "", "L/R click: start / goal", "M click: toggle wall",
-                     "arrows/wheel: stage", "E editor  [ ] brush", "S save map  F figure", "ESC quit"):
+        y = max(y + 10, H - 170)
+        for text in (self.msg[:36], "", "L/R click: start / goal", "M click / B: toggle wall",
+                     "arrows/wheel: stage", "E editor  [ ] brush", "M method  G new map", "S save map  F figure", "ESC quit"):
             scr.blit(self.font.render(text, True, DIM if text != self.msg[:36] else TXT), (W - PANEL + 14, y))
             y += 17
         pygame.display.flip()
@@ -432,6 +449,15 @@ class App:
                 self.prev_stage()
             elif k == pygame.K_e:
                 self.toggle_editor()
+            elif k == pygame.K_b and self.grid and not self.editing:
+                cell = self.cell_at(*pygame.mouse.get_pos())
+                if cell:
+                    self.toggle_block(cell)
+            elif k == pygame.K_m and self.grid and not self.editing:
+                self.next_method()
+            elif k == pygame.K_g and not self.editing and getattr(self, "generated", None):
+                kind, size, seed = self.generated
+                self.generate_map(kind, size, seed + 1)
             elif k == pygame.K_LEFTBRACKET:
                 self.brush = max(1, self.brush - 1)
             elif k == pygame.K_RIGHTBRACKET:

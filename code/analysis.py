@@ -413,96 +413,73 @@ def plot_repair(trials: list[dict], out: str | Path) -> Path:
     plt.close(fig)
     return out
 
-    trial_numbers = []
-    repair_times = []
-    rebuild_times = []
-
-    for index, trial in enumerate(trials, start=1):
-        repair_time = get_timing(trial, repair_keys)
-        rebuild_time = get_timing(trial, rebuild_keys)
-        
-        # Include a trial if at least one timing value is available.
-
-        if repair_time is None and rebuild_time is None:
-            continue
-
-        trial_numbers.append(
-            trial.get("trial", trial.get("change_id", index))
-        )
-        repair_times.append(
-            np.nan if repair_time is None else repair_time
-        )
-        rebuild_times.append(
-            np.nan if rebuild_time is None else rebuild_time
-        )
-
-    if not trial_numbers:
-        ax.text(
-            0.5, 0.5,
-            "No recognised repair/rebuild timing data",
-            ha="center",
-            va="center",
-            transform=ax.transAxes,
-        )
-        ax.set_axis_off()
-    else:
-        ax.plot(
-            trial_numbers,
-            repair_times,
-            marker="o",
-            label="Repair",
-        )
-        ax.plot(
-            trial_numbers,
-            rebuild_times,
-            marker="s",
-            label="Full rebuild",
-        )
-
-        ax.set_xlabel("Trial / change number")
-        ax.set_ylabel("Time (seconds)")
-        ax.set_title("Dynamic update: repair vs full rebuild")
-        ax.grid(True, alpha=0.3)
-        ax.legend()
-
-    fig.tight_layout()
-    fig.savefig(out, dpi=150, bbox_inches="tight")
-    plt.close(fig)
-
-    return out
-
 
 def make_all(results_dir: str | Path = "results", out_dir: str | Path = "results/figures") -> list[Path]:
-    res_path = Path(results_dir)
-    out_path = Path(out_dir)
-    out_path.mkdir(parents=True, exist_ok=True)
-    
-    csv_files = list(res_path.glob("*.csv"))
-    if not csv_files:
-        print(f"No CSVs found in {results_dir}")
-        return []
-        
-    df = load_results(csv_files)
-    
-    written_files = []
-    
-    
-    sum_df = summarize(df, metric="expanded")
-    sum_csv = out_path / "summary.csv"
-    sum_df.to_csv(sum_csv, index=False)
-    written_files.append(sum_csv)
-    
-    
-    for metric in ["expanded", "runtime_s"]:
-        plot_file = plot_scaling(df, out_path / f"scaling_{metric}.png", metric=metric)
-        written_files.append(plot_file)
-        
-   
-    pq_file = plot_path_quality(df, out_path / "path_quality.png")
-    written_files.append(pq_file)
-    
-   
-    part_file = plot_partitions(df, out_path / "partitions_expanded.png", metric="expanded")
-    written_files.append(part_file)
-    
-    return written_files
+    """Regenerate every figure and summary table of the report in one call.
+
+    Each experiment's CSV is loaded on its own: the scaling and partitions experiments
+    share some maps, so loading them together would count those queries twice, and
+    dynamic.csv has different columns. pilot.csv is a test run and is not used.
+    Missing files are skipped with a message.
+    """
+    res = Path(results_dir)
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+
+    def load(name: str):
+        path = res / f"{name}.csv"
+        if not path.exists():
+            print(f"make_all: {path} not found, skipping its figures")
+            return None
+        return load_results([path])
+
+    # summary tables (mean, sd, median, 95% CI) for every query experiment
+    for name in ("scaling", "partitions", "street"):
+        df = load(name)
+        if df is None:
+            continue
+        for metric in ("runtime_s", "expanded", "suboptimality"):
+            path = out / f"summary_{name}_{metric}.csv"
+            summarize(df, metric).to_csv(path, index=False)
+            written.append(path)
+
+    # scaling: one figure per map kind and measure, plus path quality
+    scaling = load("scaling")
+    if scaling is not None:
+        for kind in sorted(scaling["map_kind"].unique()):
+            for metric in ("runtime_s", "expanded"):
+                written.append(plot_scaling(scaling, out / f"scaling_{kind}_{metric}.png",
+                                            metric=metric, map_kind=kind))
+        written.append(plot_path_quality(scaling, out / "path_quality_scaling.png"))
+        rooms = scaling[scaling["map_kind"] == "rooms"]
+        written.append(plot_breakeven(rooms, out / "breakeven_rooms_HPA-watershed.png",
+                                      "HPA-watershed"))
+
+    # partitions: the three partition methods, then the watershed area-cap sweep
+    partitions = load("partitions")
+    if partitions is not None:
+        caps = ["HPA-watershed-nocap", "HPA-watershed-cap1024", "HPA-watershed",
+                "HPA-watershed-cap256"]
+        main = partitions[~partitions["method"].isin(caps[:2] + caps[3:])]
+        sweep = partitions[partitions["method"].isin(caps)]
+        for metric in ("runtime_s", "suboptimality"):
+            written.append(plot_partitions(main, out / f"partitions_{metric}.png", metric=metric))
+            written.append(plot_partitions(sweep, out / f"area_cap_{metric}.png", metric=metric))
+
+    # street maps: the real-city case study
+    street = load("street")
+    if street is not None:
+        for metric in ("runtime_s", "expanded"):
+            written.append(plot_scaling(street, out / f"street_{metric}.png", metric=metric))
+        written.append(plot_path_quality(street, out / "path_quality_street.png"))
+        written.append(plot_breakeven(street, out / "breakeven_street_HPA-fixed.png", "HPA-fixed"))
+
+    # dynamic maps: local repair vs full rebuild (different columns, read directly)
+    dyn_path = res / "dynamic.csv"
+    if dyn_path.exists():
+        written.append(plot_repair(pd.read_csv(dyn_path).to_dict("records"), out / "repair.png"))
+    else:
+        print(f"make_all: {dyn_path} not found, skipping the repair figure")
+
+    return written
